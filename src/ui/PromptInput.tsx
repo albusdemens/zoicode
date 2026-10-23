@@ -42,6 +42,14 @@ interface EditState {
 
 const MAX_SUGGESTIONS = 8;
 
+/**
+ * Bracketed paste markers, as Ink passes them on (without the ESC). The app turns the mode on, so the
+ * terminal wraps pasted text in them: line breaks in a paste are text, while a line break typed outside
+ * one is Enter, even when it arrives in the same read as the letters before it ("hi\r").
+ */
+const PASTE_START = '[200~';
+const PASTE_END = '[201~';
+
 /** The part of the menu that fits: up to MAX_SUGGESTIONS entries around the highlighted one. */
 export function menuWindow(count: number, selected: number) {
   const start = Math.max(0, Math.min(selected - MAX_SUGGESTIONS + 1, count - MAX_SUGGESTIONS));
@@ -81,6 +89,7 @@ export function PromptInput({ active, history, suggestions, onSubmit, onKey, onS
   const st = useRef<EditState>({ value: '', cursor: 0, histIdx: -1, draft: '', selected: 0, recalled: false });
   const [, rerender] = useState(0);
   const reported = useRef('');
+  const pasting = useRef(false);
   const update = (patch: Partial<EditState>) => {
     Object.assign(st.current, patch);
     rerender(n => n + 1);
@@ -99,21 +108,29 @@ export function PromptInput({ active, history, suggestions, onSubmit, onKey, onS
     update({ ...patch, histIdx, value, cursor: value.length, selected: 0, recalled: true });
   };
 
+  /** Enter: sends the input (or the highlighted command); a line ending in a backslash gets a new line instead. */
+  const enter = () => {
+    const s = st.current;
+    if (s.value.endsWith('\\')) return setValue(s.value.slice(0, -1) + '\n');
+    const matches = matchesOf(s);
+    const v = matches.length ? '/' + matches[s.selected].name : s.value;
+    if (!v.trim()) return;
+    update({ value: '', cursor: 0, histIdx: -1, draft: '', selected: 0, recalled: false });
+    onSubmit(v.trim());
+  };
+
   useInput(
     (input, key) => {
+      if (input === PASTE_START || input === PASTE_END) {
+        pasting.current = input === PASTE_START;
+        return;
+      }
       const s = st.current;
       if (onKey?.(input, key, s.value, v => setValue(v))) return;
       const matches = matchesOf(s);
 
       if (key.tab && matches.length) return setValue('/' + matches[s.selected].name + ' ');
-      if (key.return) {
-        if (s.value.endsWith('\\')) return setValue(s.value.slice(0, -1) + '\n');
-        const v = matches.length ? '/' + matches[s.selected].name : s.value;
-        if (!v.trim()) return;
-        update({ value: '', cursor: 0, histIdx: -1, draft: '', selected: 0, recalled: false });
-        onSubmit(v.trim());
-        return;
-      }
+      if (key.return) return enter();
       if (key.upArrow) {
         if (matches.length) return update({ selected: (s.selected - 1 + matches.length) % matches.length });
         if (!history.length) return;
@@ -144,8 +161,10 @@ export function PromptInput({ active, history, suggestions, onSubmit, onKey, onS
       }
       if (key.tab || key.escape || key.meta) return;
       if (input) {
-        const text = input.replace(/\r\n?/g, '\n');
+        const typedEnter = !pasting.current && /^[^\r\n]+\r$/.test(input);
+        const text = (typedEnter ? input.slice(0, -1) : input).replace(/\r\n?/g, '\n');
         setValue(s.value.slice(0, s.cursor) + text + s.value.slice(s.cursor), s.cursor + text.length);
+        if (typedEnter) enter();
       }
     },
     { isActive: active },

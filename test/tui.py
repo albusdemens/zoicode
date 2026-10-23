@@ -7,6 +7,8 @@ A step is either "wait:<seconds>", "until:<text>" (wait up to 120s for text on s
 screen as an image), or keys to type. Keys may contain the escapes
 <enter> <esc> <tab> <stab> <up> <down> <left> <right> <ctrl-c> <ctrl-u> <bs>.
 snap, full and shot first wait for the screen to settle, so they never show half a frame.
+"burst:<keys>" sends the keys in one write (a fast typist on a busy machine), "paste:<keys>" sends
+them in one write wrapped in bracketed-paste markers (a paste).
 """
 import os, pty, select, sys, time, signal
 RAW = open(os.environ['RAW_LOG'], 'wb') if os.environ.get('RAW_LOG') else None
@@ -81,14 +83,20 @@ def full():
         print(''.join(line[x].data for x in range(COLS)).rstrip())
     print(text().rstrip())
 
-def type_keys(s):
-    i = 0
+def keys(s):
+    """The key presses in s, with <enter> and friends turned into what the terminal sends."""
+    out, i = [], 0
     while i < len(s):
         for k, v in KEYS.items():
             if s.startswith(k, i):
-                os.write(fd, v.encode()); i += len(k); break
+                out.append(v); i += len(k); break
         else:
-            os.write(fd, s[i].encode()); i += 1
+            out.append(s[i]); i += 1
+    return out
+
+def type_keys(s):
+    for k in keys(s):
+        os.write(fd, k.encode())
         pump(float(os.environ.get('KEY_DELAY', '0.02')))
 
 alive = True
@@ -103,6 +111,10 @@ for step in sys.argv[2:]:
             alive = pump(0.2)
         if target not in text():
             print(f'!! timed out waiting for {target!r}')
+    elif step.startswith('burst:'):
+        os.write(fd, ''.join(keys(step[6:])).encode())
+    elif step.startswith('paste:'):
+        os.write(fd, ('\x1b[200~' + ''.join(keys(step[6:])) + '\x1b[201~').encode())
     elif step == 'snap':
         alive = settle()
         snap()

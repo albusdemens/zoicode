@@ -65,6 +65,9 @@ export async function startInteractive(opts: StartOptions) {
   agent.messages = session.messages;
 
   let current = session;
+  // Pasted text comes wrapped in markers, so the input box can tell a paste from typing (PromptInput).
+  process.stdout.write('\x1b[?2004h');
+  process.once('exit', () => process.stdout.write('\x1b[?2004l'));
   const instance = render(
     <App
       agent={agent}

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Smoke test of the interactive UI: runs Zoi Code in a pseudo-terminal against test/fake-raon.mjs,
-# opens the command menu, gets a reply, approves a command, and checks that the command ran and that
-# the prompt stayed at the bottom of the screen the whole time. Needs Python 3 with pyte.
+# opens the command menu, gets a reply, pastes two lines (which must not be sent), sends a message whose
+# Enter arrives with its letters in one read, approves a command, and checks that the command ran and
+# that the prompt stayed at the bottom of the screen the whole time. Needs Python 3 with pyte.
 # Usage: test/ui-smoke.sh [path/to/cli.js]   (default: dist/cli.js)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -15,7 +16,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-node test/fake-raon.mjs 0 > "$work/port" &
+# Its own stderr too: Node makes a pipe it shares non-blocking, and then `cat` below can fail with EAGAIN.
+node test/fake-raon.mjs 0 > "$work/port" 2> "$work/server.log" &
 server=$!
 for _ in $(seq 50); do [ -s "$work/port" ] && break; sleep 0.1; done
 mkdir -p "$work/proj"
@@ -23,11 +25,15 @@ mkdir -p "$work/proj"
 RAON_BASE_URL="http://127.0.0.1:$(cat "$work/port")/v1" RAON_API_KEY=test RAON_MODEL=raon-test \
 ZOI_TEST_HOME="$work/home" ZOI_CLI="$cli" TUI_COLS=116 TUI_ROWS=42 \
   python3 test/tui.py "$work/proj" wait:4 snap '<enter>' wait:3 snap / snap '<down><down>' snap '<bs>' snap \
-    'hello<enter>' until:'fake server' snap 'please make a file<enter>' until:'Bash command' snap \
-    '<enter>' until:'the file is there' snap > "$work/screens"
+    'hello<enter>' until:'fake server' snap 'paste:two<enter>lines' snap '<esc>' \
+    'burst:quick<enter>' until:'You said: quick' snap 'please make a file<enter>' until:'Bash command' snap \
+    wait:0.6 '<enter>' until:'the file is there' snap > "$work/screens"
 cat "$work/screens"
 
 [ -f "$work/proj/made-1.txt" ] || { echo 'FAIL: the approved command did not run'; exit 1; }
+grep -q 'You said: quick' "$work/screens" || { echo 'FAIL: text and Enter read together were not sent'; exit 1; }
+grep -q 'You said: two' "$work/screens" && { echo 'FAIL: a pasted line break sent the message'; exit 1; }
+grep -q '│ › two *│' "$work/screens" || { echo 'FAIL: the paste did not land in the input box'; exit 1; }
 python3 - "$work/screens" <<'EOF'
 import re, sys
 screens = open(sys.argv[1], encoding='utf-8').read().split('===== screen')[2:]  # skip the opening scene

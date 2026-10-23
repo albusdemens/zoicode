@@ -35,7 +35,7 @@
   },
   "scripts": {
     "dev": "tsx src/cli.tsx",
-    "build": "esbuild src/cli.tsx --bundle --platform=node --format=esm --packages=external --outfile=dist/cli.js --banner:js=\"#!/usr/bin/env node\"",
+    "build": "esbuild src/cli.tsx --bundle --platform=node --format=esm --packages=external --outfile=dist/main.js && esbuild src/bin.ts --platform=node --format=esm --outfile=dist/cli.js --banner:js=\"#!/usr/bin/env node\"",
     "typecheck": "tsc --noEmit",
     "test": "tsx test/run.mts && tsx test/agent-core.mts && tsx test/bash.mts && tsx test/files.mts && tsx test/search-web.mts && tsx test/cli-config.mts",
     "prepublishOnly": "npm run typecheck && npm run build"

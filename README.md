@@ -10,8 +10,10 @@ You need Linux, macOS or WSL, Node.js 22.12+, and a Raon API key (apply on the
 npm install -g --no-fund https://github.com/albusdemens/zoicode/archive/refs/heads/main.tar.gz
 ```
 
-npm ends with a line like `added 98 packages in 6s`. Run it again to update. (If it fails with
-`EACCES`, install Node with [nvm](https://github.com/nvm-sh/nvm) or Homebrew, so global installs don't need sudo.)
+npm ends with a line like `added 98 packages in 6s`. Run it again to update.
+
+If npm fails with `EACCES`, or your Node is older than 22.12 (Ubuntu's and WSL's own package is),
+install Node with [nvm](https://github.com/nvm-sh/nvm) (`nvm install 22`) or Homebrew, and don't use sudo.
 
 Then run `zoicode` in your project folder. The first time, it asks for your API key and saves it
 to `~/.zoicode/.env`. You can also set `RAON_API_KEY` instead.
