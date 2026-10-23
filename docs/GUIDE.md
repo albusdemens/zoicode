@@ -6,18 +6,21 @@ Install instructions are in the [README](../README.md).
 
 <p align="center">
   <img src="opening.png" alt="The opening screen: the Zoi Code logo, a wooden menu, and the cat sitting on a desk next to a computer" width="49%">
-  <img src="session.png" alt="A session: a colored diff of an edit, the cat above the prompt, and a permission prompt for a command" width="49%">
+  <img src="session.png" alt="A Zoi Code session, with the cat above the prompt" width="49%">
 </p>
 
 The opening screen has a small menu. Use ↑↓ and Enter:
 
 - **New Session** starts fresh.
-- **Continue** resumes the last session in this folder.
+- **Continue** resumes the last session in this folder (listed once there is one).
 - **Plan Studio** starts in plan mode.
 - **Build Studio** starts with file edits auto-accepted.
 
 Then the cat hops down onto your prompt and keeps you company. It mostly sits still, with an
-occasional blink or tail flick. `--no-splash` skips the opening.
+occasional blink or tail flick.
+
+The opening needs a terminal of at least 116×42; in a smaller one, Zoi Code opens straight at the
+prompt. `--no-splash` skips the opening.
 
 ## What it can do
 
@@ -29,8 +32,8 @@ occasional blink or tail flick. `--no-splash` skips the opening.
   `git diff` run without asking.
 - **Plan before building.** Shift+Tab cycles through the modes: *default* → *auto-accept edits*
   → *plan*. In plan mode Raon only researches, then shows a plan for you to approve.
-- **Track its work.** Bigger tasks get a to-do list (the Quest Log), and Raon can hand searches
-  off to subagents that have their own context.
+- **Track its work.** Bigger tasks get a to-do list, and Raon can hand searches off to subagents
+  that have their own context.
 - **Remember.** Sessions are saved per folder: `zoicode -c` continues the last one, and
   `zoicode -r` lists them. Project notes in `ZOICODE.md` (or `CLAUDE.md`) are loaded into every
   conversation. `/init` writes one, and a line starting with `#` adds a note.
@@ -89,7 +92,7 @@ front matter shows up in `/help`. Commands from `.claude/commands/` work too.
 zoicode [prompt]                 start (optionally with a first message)
 zoicode -p "prompt"              print the answer and exit; piped stdin is added to the prompt
     --output-format text|json|stream-json
-    --verbose                     show tool calls and reasoning on stderr
+    --verbose                    show tool calls and reasoning on stderr (text output only)
 zoicode -c                       continue the most recent session in this folder
 zoicode -r [id]                  resume a session (without an id: list them)
 zoicode --permission-mode default|acceptEdits|plan|bypass
@@ -104,15 +107,18 @@ Add `--permission-mode acceptEdits` to let it edit files, or `--yolo` to allow e
 
 ### Permissions and safety
 
-- **Approvals.** Reading and searching never ask. Writing, editing, running commands and fetching
-  web pages ask unless you've allowed them.
+- **Approvals.** Reading and searching never ask, anywhere on disk, not just in the project (Read,
+  Glob, Grep, LS, and read-only commands such as `cat`). What Raon reads goes to the Raon API.
+  Writing, editing, running commands and fetching web pages ask unless you've allowed them.
 - **"Don't ask again" rules last for the session and stay narrow.** A Bash rule covers only simple
   commands of that program (`npm …`, never `npm … && rm …`). Edit rules and auto-accept mode only
   cover files inside the project folder.
 - **No credentials from projects.** Configuration is never read from the project's `.env`, so a
   repository can't redirect your API key to another server.
 - **Clean display.** Commands, paths and output chosen by the model are cleaned of terminal
-  escape codes before they are shown, so an approval prompt always shows exactly what will run.
+  escape codes before they are shown, so nothing hidden can sneak into an approval prompt. A very
+  long command is cut off with `… +N more lines`: if you can't see all of it, answer No (Esc) and
+  ask Raon to split it up.
 
 ## Configuration
 
@@ -120,10 +126,14 @@ Set these in your environment or in `~/.zoicode/.env`:
 
 | Variable | Default | |
 |----------|---------|---|
-| `RAON_API_KEY` | (required) | Your API key |
+| `RAON_API_KEY` | (required) | Your API key; get one on the [Raon site](https://raon-mini.krafton.ai/en) |
 | `RAON_BASE_URL` | `https://raon-api.krafton.ai/v1` | Any OpenAI-compatible endpoint works |
 | `RAON_MODEL` | `raon-1-mini-preview` | |
 | `RAON_CONTEXT_WINDOW` | `262144` | In tokens, e.g. `131072` or `128k`; sets when auto-compaction starts |
+
+When a variable is set in more than one place, the environment wins, then the `.env` in the root
+of a clone you run from (`npm run dev`, `npm link`), then `~/.zoicode/.env`. The `.env` of the
+project you work on is never read.
 
 Zoi Code keeps its files in `~/.zoicode/`:
 
@@ -148,10 +158,27 @@ on the user's machine: run `npm run build` before committing changes to `src/`.
 It is written in TypeScript with [Ink](https://github.com/vadimdemedes/ink) (React for the
 terminal), like Claude Code, and talks to Raon through the OpenAI SDK.
 
-**Tools for working on the interface.** They need Python 3 with `pip install pyte pillow numpy`:
+**Tools for working on the interface.** Run the `.ts` ones with `npx tsx scripts/<name>.ts`. The
+Python ones need Python 3 with `pip install pyte pillow numpy`. Screenshots (`shot:`,
+`test/termshot.py`, `scene-preview.ts`) also need DejaVu Sans Mono, read from
+`/usr/share/fonts/truetype/dejavu/` or any other font folder (`fonts-dejavu-core` on
+Debian/Ubuntu). Symbols and emoji it lacks come from the Noto fonts if they are installed
+(`fonts-noto-core`, `fonts-noto-color-emoji`).
 
 - `test/tui.py` runs Zoi Code in a pseudo-terminal, types keys and saves screenshots. Example:
   `python3 test/tui.py <folder> wait:2 "hello<enter>" until:Thought shot:out.png`
+  - It runs `dist/cli.js`: run `npm run build` first, or set `ZOI_CLI` to another build.
+  - The terminal is 110×50. Set `TUI_COLS` and `TUI_ROWS` for another size (the opening needs
+    116×42).
+  - `ZOI_ARGS` passes flags, e.g. `ZOI_ARGS=--no-splash`.
+  - It uses your real `~/.zoicode` and key, and calls the real API. Set
+    `ZOI_TEST_HOME=/tmp/zoi-home` to use a scratch home instead; that home has no key, so export
+    `RAON_API_KEY` too.
+  - `node test/fake-raon.mjs` stands in for the Raon API (point `RAON_BASE_URL` at the port it
+    prints). Asking it to "make a file" gets a command that needs approval.
+- `test/ui-smoke.sh` uses both to check the interactive app end to end: the command menu, a reply,
+  an approved command, and the prompt staying at the bottom of the screen. CI runs it on Linux and
+  macOS.
 - `test/termshot.py` renders terminal output to a PNG.
 - `scripts/scene-preview.ts` renders the opening scene's frames.
 - `scripts/sprite-preview.ts` validates and renders the sprites.
@@ -165,14 +192,28 @@ src/
   agent.ts           the agent loop: tools, permissions, plan mode, subagents, compaction
   llm.ts             streaming client for the OpenAI-compatible API
   prompt.ts          system prompt and memory files
-  config.ts setup.ts sessions.ts headless.ts
+  config.ts          settings, from the environment and .env files
+  setup.ts           API key setup (first run and --setup)
+  sessions.ts        saved sessions
+  headless.ts        -p mode
   tools/             Read Write Edit Bash Glob Grep LS WebFetch TodoWrite Task ExitPlanMode
   ui/
+    start.tsx        startup: the -r list, the opening, then the App
     App.tsx          the session screen (Ink)
+    pinBottom.ts     keeps the live area and the prompt at the bottom of the screen
+    PromptInput.tsx  the input box and its keys
+    commands.ts      slash commands, custom commands, @file mentions
+    Permission.tsx   approval and plan prompts
+    Messages.tsx     messages, tool calls and the to-do list
+    markdown.ts      Markdown, code and diff rendering
+    sanitize.ts      strips terminal escape codes from model output
+    theme.ts         colors and the spinner
     opening.ts       the opening scene, drawn straight to the terminal
     scene.ts         layout and painting of the scene
     canvas.ts        half-block pixel compositor
-    Cat.tsx catAnim.ts   the cat and its animation
+    pixels.ts        sprites as half-block text
+    Cat.tsx          the cat on the prompt box, and what it says
+    catAnim.ts       the cat's blinks, tail flicks and hop to the prompt
     sprites/         pixel art: cat, logo, computer
 art/                 original artwork the sprites come from
 scripts/             art import and preview tools
@@ -181,5 +222,5 @@ test/                tests, plus the pseudo-terminal harness
 
 ## Credits
 
-The interface is inspired by [Claude Code](https://github.com/anthropics/claude-code), and the look by Stardew Valley.
-Zoi Code is an independent project, not affiliated with either. The logo and cat artwork are in `art/`.
+The interface is inspired by [Claude Code](https://github.com/anthropics/claude-code). Zoi Code is
+an independent project, not affiliated with Anthropic. The logo and cat artwork are in `art/`.

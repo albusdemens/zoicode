@@ -9,6 +9,8 @@ const dim = chalk.hex('#8C7A6B');
 const berry = chalk.hex('#D9466A');
 const grass = chalk.hex('#7BC043');
 
+const RAON_SITE = 'https://raon-mini.krafton.ai/en';
+
 /** Reads a line without echoing it, showing a dot per character. */
 function askSecret(question: string): Promise<string> {
   const stdin = process.stdin;
@@ -135,7 +137,8 @@ export async function runSetup(): Promise<void> {
   }
   console.log(`\n${gold.bold('Welcome to Zoi Code!')} ${dim("Let's get you set up.")}\n`);
   console.log(dim('Zoi Code talks to the Raon API. Paste your API key below; it is saved to'));
-  console.log(dim(`${path.join(CONFIG_DIR, '.env')} (readable only by you).\n`));
+  console.log(dim(`${path.join(CONFIG_DIR, '.env')} (readable only by you).`));
+  console.log(dim(`No key yet? Get one at ${RAON_SITE}\n`));
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     const key = await askSecret(gold('Raon API key: '));

@@ -13,12 +13,9 @@ export interface SpriteSheet {
   frames: Record<string, string[]>;
 }
 
-export function sheetGrid(sheet: SpriteSheet, frame: string, flipX = false): Grid {
+export function sheetGrid(sheet: SpriteSheet, frame: string): Grid {
   const rows = sheet.frames[frame] ?? sheet.frames[Object.keys(sheet.frames)[0]];
-  return rows.map(r => {
-    const cells = [...r].map(ch => (ch === '.' ? null : sheet.palette[ch] ?? null));
-    return flipX ? cells.reverse() : cells;
-  });
+  return rows.map(r => [...r].map(ch => (ch === '.' ? null : sheet.palette[ch] ?? null)));
 }
 
 /** Pixels that differ between two frames. */

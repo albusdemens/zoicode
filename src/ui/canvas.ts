@@ -40,10 +40,6 @@ export class Paint {
     if (x >= 0 && x < this.w && y >= 0 && y < this.h * 2) this.px[y * this.w + x] = c;
   }
 
-  get(x: number, y: number): string | null {
-    return x >= 0 && x < this.w && y >= 0 && y < this.h * 2 ? this.px[y * this.w + x] : null;
-  }
-
   rect(x: number, y: number, w: number, h: number, c: string | null) {
     for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) this.pixel(xx, yy, c);
   }

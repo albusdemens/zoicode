@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Box, Static, Text, useApp, useStdout } from 'ink';
+import { Box, Static, Text, useApp, useInput, useStdout, type DOMElement } from 'ink';
 import wrapAnsi from 'wrap-ansi';
 import { Agent, type PermissionAnswer, type PermissionMode, type PlanAnswer } from '../agent.js';
 import type { ChatMessage } from '../llm.js';
@@ -15,7 +15,8 @@ import { COMMANDS, expandMentions, findCommand, loadCustomCommands, runsWhileBus
 import { bulleted, renderMarkdown } from './markdown.js';
 import { MessageItem, TodoList, ToolLine, type Item } from './Messages.js';
 import { PermissionPrompt, PlanApproval } from './Permission.js';
-import { PromptInput } from './PromptInput.js';
+import { menuWindow, PromptInput, SuggestionMenu, type InputStatus } from './PromptInput.js';
+import { pinToBottom, type Pin } from './pinBottom.js';
 import { sanitize } from './sanitize.js';
 import { PET_MARGIN, PET_ROWS } from './scene.js';
 import { CAT_W } from './sprites/index.js';
@@ -139,6 +140,8 @@ export function App({ agent, session: initialSession, initialPrompt, banner, mak
       : []),
   ]);
   const [staticKey, setStaticKey] = useState(0);
+  // The first frame is empty, so the live area is pinned before anything is printed (see below).
+  const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [frame, setFrame] = useState(0);
   const [running, setRunning] = useState<Extract<Item, { kind: 'tool' }>[]>([]);
@@ -153,6 +156,7 @@ export function App({ agent, session: initialSession, initialPrompt, banner, mak
   const skippedCommands = useRef<string[]>([]);
   const [commands] = useState(() => [...COMMANDS, ...loadCustomCommands(agent.cwd, skippedCommands.current)]);
   const [mood, setMood] = useState<CatMood>('idle');
+  const [inputStatus, setInputStatus] = useState<InputStatus>({ matches: [], selected: 0 });
   const [say, setSay] = useState<string | null>(null);
   // Bypass is only reachable with shift+tab if the session started in it (--yolo), like Claude Code.
   const [modes] = useState<PermissionMode[]>(() =>
@@ -170,6 +174,8 @@ export function App({ agent, session: initialSession, initialPrompt, banner, mak
   const sayTimer = useRef<NodeJS.Timeout | undefined>(undefined);
   const moodTimer = useRef<NodeJS.Timeout | undefined>(undefined);
   const exitTimer = useRef<NodeJS.Timeout | undefined>(undefined);
+  const liveBox = useRef<DOMElement>(null);
+  const pin = useRef<Pin | null>(null);
 
   const push = (...more: Item[]) => setItems(prev => [...prev, ...more]);
   const info = (text: string, color?: string) => push({ kind: 'info', id: uid(), text, color });
@@ -203,9 +209,19 @@ export function App({ agent, session: initialSession, initialPrompt, banner, mak
   /** Clears the screen (and scrollback) and starts over with these items. */
   const resetScreen = (next: Item[]) => {
     process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
+    pin.current?.refill();
     setStaticKey(k => k + 1);
     setItems([{ kind: 'banner', id: uid(), lines: makeBanner() }, ...next]);
   };
+
+  // Keep the prompt at the bottom of the screen, then show the live area and print the banner, so
+  // the first frame Ink writes already fills the screen and the prompt starts at the bottom.
+  useLayoutEffect(() => {
+    const p = liveBox.current ? pinToBottom(liveBox.current, () => stdout.rows || 24) : null;
+    pin.current = p;
+    setReady(true);
+    return () => p?.release();
+  }, []);
 
   useEffect(() => {
     if (busy) {
@@ -401,7 +417,7 @@ export function App({ agent, session: initialSession, initialPrompt, banner, mak
 
   /** `!command`: runs right away in the shell, like a turn (queued while busy, esc stops it). */
   async function runBang(command: string) {
-    const ac = beginWork('Digging');
+    const ac = beginWork('Running');
     try {
       const result = await BashTool.run({ command }, { ...agent.ctx, signal: ac.signal });
       push({ kind: 'bash', id: uid(), command, output: result.output, isError: !!result.isError });
@@ -564,12 +580,33 @@ export function App({ agent, session: initialSession, initialPrompt, banner, mak
 
   // ---- layout, sized so the live area always fits on screen -----------------------
   // The pet sits at the bottom right, on top of the prompt box; whatever Raon is doing (its reply,
-  // tool calls, the spinner, the pet's speech bubble) flows in the column to its left.
+  // tool calls, the spinner, the pet's speech bubble, the command menu) flows in the column to its
+  // left. The live area is pinned to the bottom of the screen (pinBottom.ts).
   const l = live.current;
   const rows = stdout.rows || 24;
   const cols = stdout.columns || 80;
   const modeLabel = MODE_LABEL[mode] ?? MODE_LABEL.default;
   const prompting = !!(permission || planApproval);
+
+  // In an approval prompt the input box is off, so Ctrl+C is handled here: the first press stops
+  // the turn (answering No), a second one within two seconds quits.
+  useInput(
+    (input, key) => {
+      if (!(key.ctrl && input === 'c')) return;
+      if (exitArmed) return void shutdown();
+      controller.current?.abort();
+      permission?.resolve('deny');
+      planApproval?.resolve('keep');
+      setExitArmed(true);
+      clearTimeout(exitTimer.current);
+      exitTimer.current = setTimeout(() => setExitArmed(false), 2000);
+    },
+    { isActive: prompting },
+  );
+
+  const menu = !prompting && inputStatus.matches.length ? inputStatus : null;
+  const menuRows = menu ? menuWindow(menu.matches.length, menu.selected).rows : 0;
+  const hint = prompting ? undefined : inputStatus.hint;
   const petHeight = PET_ROWS;
   const petWidth = CAT_W + PET_MARGIN;
   // The pet needs room above the prompt; a permission prompt needs ~16 rows of its own.
@@ -580,7 +617,7 @@ export function App({ agent, session: initialSession, initialPrompt, banner, mak
   const todoMax = Math.max(3, Math.min(12, Math.floor((rows - 20) / 2)));
   const showTodos = busy && !prompting && todos.some(t => t.status !== 'completed');
   const todoRows = showTodos ? Math.min(todos.length, todoMax) + 3 : 0;
-  const sideRows = runningRows + todoRows + (queue.length ? 1 : 0) + (say ? 3 : 0) + (showSpinner ? 2 : 0) + 2;
+  const sideRows = runningRows + todoRows + (queue.length ? 1 : 0) + (say ? 3 : 0) + (showSpinner ? 2 : 0) + menuRows + 2;
   const textBudget = rows - 1 - (PROMPT_ROWS_UI + 1) - sideRows - 1;
   const promptBudget = rows - 1 - (petShown ? petHeight : 0) - 1 - 2;
   const reasoningTail = sanitize(l.reasoning.trim().split('\n').filter(Boolean).slice(-2).join(' ')).slice(-leftWidth + 10);
@@ -592,16 +629,17 @@ export function App({ agent, session: initialSession, initialPrompt, banner, mak
 
   const left = exitArmed
     ? 'Press Ctrl-C again to quit'
-    : modeLabel.text
-      ? `${modeLabel.text} (shift+tab to cycle)`
-      : busy
-        ? 'esc to interrupt · type to queue a message'
-        : '? /help for commands';
-
+    : hint
+      ? hint.text
+      : modeLabel.text
+        ? `${modeLabel.text} (shift+tab to cycle)`
+        : busy
+          ? 'esc to interrupt · type to queue a message'
+          : '? /help for commands';
 
   return (
     <Box flexDirection="column">
-      <Static key={staticKey} items={items}>
+      <Static key={staticKey} items={ready ? items : []}>
         {item => (
           <Box key={item.id} flexDirection="column">
             <MessageItem item={item} cwd={agent.cwd} />
@@ -609,83 +647,85 @@ export function App({ agent, session: initialSession, initialPrompt, banner, mak
         )}
       </Static>
 
-      {/* Raon's live work on the left, the pet at the bottom right, sitting on the prompt box. */}
-      <Box flexDirection="row" alignItems="flex-end">
-        <Box flexDirection="column" width={leftWidth} minHeight={petShown ? petHeight : 0} justifyContent="flex-end">
-          {busy && reasoningTail && !l.text && !prompting ? (
-            <Box marginTop={1}>
-              <Text color={C.dim} italic wrap="truncate-end">
-                ✻ {reasoningTail}
-              </Text>
-            </Box>
-          ) : null}
-          {streaming && !prompting ? (
-            <Box marginTop={1}>
-              <Text>{streaming}</Text>
-            </Box>
-          ) : null}
-          {running.map(t => (
-            <ToolLine key={t.id} item={t} cwd={agent.cwd} />
-          ))}
-          {showTodos ? (
-            <Box marginTop={1}>
-              <TodoList todos={todos} max={todoMax} />
-            </Box>
-          ) : null}
-          {queue.length > 0 ? (
-            <Box paddingLeft={2}>
-              <Text color={C.dim} wrap="truncate-end">
-                ⏳ queued: {queue.map(q => sanitize(q.display)).join(' · ')}
-              </Text>
-            </Box>
-          ) : null}
-          {say && petShown ? (
-            <Box justifyContent="flex-end">
-              <Bubble text={say} />
-            </Box>
-          ) : null}
-          {showSpinner ? <Spinner frame={frame} verb={l.verb} started={l.started} tokens={l.outTokens} /> : null}
+      <Box ref={liveBox} flexDirection="column" justifyContent="flex-end" display={ready ? 'flex' : 'none'}>
+        {/* Raon's live work on the left, the pet at the bottom right, sitting on the prompt box. */}
+        <Box flexDirection="row" alignItems="flex-end">
+          <Box flexDirection="column" width={leftWidth} minHeight={petShown ? petHeight : 0} justifyContent="flex-end">
+            {busy && reasoningTail && !l.text && !prompting ? (
+              <Box marginTop={1}>
+                <Text color={C.dim} italic wrap="truncate-end">
+                  ✻ {reasoningTail}
+                </Text>
+              </Box>
+            ) : null}
+            {streaming && !prompting ? (
+              <Box marginTop={1}>
+                <Text>{streaming}</Text>
+              </Box>
+            ) : null}
+            {running.map(t => (
+              <ToolLine key={t.id} item={t} cwd={agent.cwd} />
+            ))}
+            {showTodos ? (
+              <Box marginTop={1}>
+                <TodoList todos={todos} max={todoMax} />
+              </Box>
+            ) : null}
+            {queue.length > 0 ? (
+              <Box paddingLeft={2}>
+                <Text color={C.dim} wrap="truncate-end">
+                  ⏳ queued: {queue.map(q => sanitize(q.display)).join(' · ')}
+                </Text>
+              </Box>
+            ) : null}
+            {say && petShown ? (
+              <Box justifyContent="flex-end">
+                <Bubble text={say} />
+              </Box>
+            ) : null}
+            {showSpinner ? <Spinner frame={frame} verb={l.verb} started={l.started} tokens={l.outTokens} /> : null}
+            {menu ? <SuggestionMenu matches={menu.matches} selected={menu.selected} /> : null}
+          </Box>
+          {petShown ? <CatCompanion mood={mood} /> : null}
         </Box>
-        {petShown ? <CatCompanion mood={mood} /> : null}
-      </Box>
 
-      {planApproval ? (
-        <PlanApproval plan={planApproval.plan} maxLines={promptBudget} onAnswer={planApproval.resolve} />
-      ) : permission ? (
-        <PermissionPrompt
-          tool={permission.tool}
-          input={permission.input}
-          cwd={agent.cwd}
-          rules={permission.rules}
-          maxLines={promptBudget}
-          onAnswer={permission.resolve}
-        />
-      ) : null}
-      {/* Kept mounted while a prompt is open, so a half-typed message survives it. */}
-      <Box display={prompting ? 'none' : 'flex'} flexDirection="column">
-        <PromptInput
-          active={!prompting}
-          history={history}
-          suggestions={v => suggestCommands(v, commands)}
-          onSubmit={submit}
-          onKey={onKey}
-        />
-      </Box>
-      <Box paddingX={2} height={1}>
-        <Box flexGrow={1} flexShrink={1}>
-          <Text color={exitArmed ? C.berry : modeLabel.color} wrap="truncate-end">
-            {left}
-          </Text>
+        {planApproval ? (
+          <PlanApproval plan={planApproval.plan} maxLines={promptBudget} onAnswer={planApproval.resolve} />
+        ) : permission ? (
+          <PermissionPrompt
+            tool={permission.tool}
+            input={permission.input}
+            cwd={agent.cwd}
+            rules={permission.rules}
+            maxLines={promptBudget}
+            onAnswer={permission.resolve}
+          />
+        ) : null}
+        {/* Kept mounted while a prompt is open, so a half-typed message survives it. */}
+        <Box display={prompting ? 'none' : 'flex'} flexDirection="column">
+          <PromptInput
+            active={!prompting}
+            history={history}
+            suggestions={v => suggestCommands(v, commands)}
+            onSubmit={submit}
+            onKey={onKey}
+            onStatus={setInputStatus}
+          />
         </Box>
-        <Box flexShrink={0}>
-          <Text color={C.dim}>
-            <ContextMeter used={agent.contextTokens} total={agent.llm.config.contextWindow} />
-            {cols >= 90 ? <Text color={C.dim}>  {usage} tokens</Text> : null}
-          </Text>
+        <Box paddingX={2} height={1}>
+          <Box flexGrow={1} flexShrink={1}>
+            <Text color={exitArmed ? C.berry : hint ? hint.color : modeLabel.color} wrap="truncate-end">
+              {left}
+            </Text>
+          </Box>
+          <Box flexShrink={0}>
+            <Text color={C.dim}>
+              <ContextMeter used={agent.contextTokens} total={agent.llm.config.contextWindow} />
+              {cols >= 90 ? <Text color={C.dim}>  {usage} tokens</Text> : null}
+            </Text>
+          </Box>
         </Box>
       </Box>
     </Box>
   );
 }
-
-export { COMMANDS };

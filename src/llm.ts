@@ -18,7 +18,6 @@ export interface Usage {
 export type StreamEvent =
   | { type: 'reasoning'; delta: string }
   | { type: 'text'; delta: string }
-  | { type: 'tool_call_start'; index: number; name: string }
   // finishReason is '' when the stream ended without one: the reply may be cut off.
   | { type: 'done'; text: string; reasoning: string; toolCalls: ToolCall[]; usage?: Usage; finishReason: string };
 
@@ -75,11 +74,7 @@ export class LLM {
           call = calls[tc.index] = { id: tc.id ?? `call_${tc.index}`, name: '', arguments: '' };
         }
         if (tc.id) call.id = tc.id;
-        if (tc.function?.name) {
-          const first = !call.name;
-          call.name += tc.function.name;
-          if (first) yield { type: 'tool_call_start', index: tc.index, name: call.name };
-        }
+        if (tc.function?.name) call.name += tc.function.name;
         if (tc.function?.arguments) call.arguments += tc.function.arguments;
       }
       if (choice.finish_reason) finishReason = choice.finish_reason;

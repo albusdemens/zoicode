@@ -3,36 +3,50 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { Worker } from 'node:worker_threads';
-import fg from 'fast-glob';
+import { glob, type FileSystemAdapter } from 'tinyglobby';
 import { type Tool, resolvePath, truncate } from './types.js';
 
 const IGNORE = ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**', '**/.next/**', '**/__pycache__/**'];
 
-type ReaddirCallback = (err: NodeJS.ErrnoException | null, entries?: unknown[]) => void;
-
 /**
- * fast-glob follows directory symlinks without loop detection: `src/up -> ..` repeats the tree until ELOOP and
- * two such links never finish. This fs adapter reads nothing for a directory that has the same dev:ino as one of
- * its own parent paths (the loop check `find -L` makes), or once the tool call is interrupted.
+ * File walks follow symlinks, so a symlinked file is searched like any other. A symlinked directory
+ * that leads back to one of the directories above it (`src/up -> ..`) would repeat the tree forever,
+ * so this fs adapter fails to resolve such a link (the loop check `find -L` makes, by dev:ino), and
+ * the walk skips it.
  */
-function walkGuard(signal?: AbortSignal): fg.Options['fs'] {
-  const ids = new Map<string, string>(); // directory path -> dev:ino, for every directory read so far
-  function readdir(dir: string, opts: unknown, cb?: ReaddirCallback): void {
-    const done = (typeof opts === 'function' ? opts : cb) as ReaddirCallback;
-    if (signal?.aborted) return done(null, []);
-    fsCb.stat(dir, (err, st) => {
-      if (err) return done(err);
-      const id = `${st.dev}:${st.ino}`;
-      // An ino of 0 means the filesystem has no inode numbers, so there is nothing to compare.
-      for (let p = dir, up = path.dirname(p); st.ino && up !== p; p = up, up = path.dirname(p)) {
-        if (ids.get(up) === id) return done(null, []); // dir is its own ancestor: a symlink loop
-      }
-      ids.set(dir, id);
-      if (typeof opts === 'function') fsCb.readdir(dir, done as never);
-      else fsCb.readdir(dir, opts as { withFileTypes: true }, done as never);
+function loopGuard(): FileSystemAdapter {
+  const ids = new Map<string, Promise<string | undefined>>(); // directory path -> dev:ino
+  const idOf = (p: string) => {
+    let id = ids.get(p);
+    // An ino of 0 means the filesystem has no inode numbers, so there is nothing to compare.
+    if (!id) ids.set(p, (id = fs.stat(p).then(st => (st.ino ? `${st.dev}:${st.ino}` : undefined), () => undefined)));
+    return id;
+  };
+  async function loops(link: string, target: string): Promise<boolean> {
+    const st = await fs.stat(target).catch(() => null);
+    if (!st?.isDirectory() || !st.ino) return false;
+    const id = `${st.dev}:${st.ino}`;
+    for (let dir = path.dirname(link), up = path.dirname(dir); ; dir = up, up = path.dirname(dir)) {
+      if ((await idOf(dir)) === id) return true;
+      if (up === dir) return false;
+    }
+  }
+  function realpath(link: string, cb: (err: NodeJS.ErrnoException | null, resolved: string) => void) {
+    fsCb.realpath(link, (err, resolved) => {
+      if (err) return cb(err, resolved);
+      loops(link, resolved).then(loop =>
+        cb(loop ? Object.assign(new Error(`symlink loop at ${link}`), { code: 'ELOOP' }) : null, resolved),
+      );
     });
   }
-  return { readdir: readdir as NonNullable<fg.Options['fs']>['readdir'] };
+  return { realpath: realpath as FileSystemAdapter['realpath'] };
+}
+
+/** Files under cwd matching pattern, as absolute paths. Stops early (with what it found) when interrupted. */
+function walk(pattern: string, cwd: string, signal?: AbortSignal): Promise<string[]> {
+  return glob(pattern, {
+    cwd, ignore: IGNORE, dot: true, absolute: true, onlyFiles: true, expandDirectories: false, signal, fs: loopGuard(),
+  });
 }
 
 export const GlobTool: Tool<{ pattern: string; path?: string }> = {
@@ -52,11 +66,10 @@ export const GlobTool: Tool<{ pattern: string; path?: string }> = {
   label: i => i.pattern + (i.path ? ` in ${i.path}` : ''),
   async run(input, ctx) {
     const cwd = resolvePath(ctx, input.path);
-    const entries = await fg(input.pattern, {
-      cwd, ignore: IGNORE, dot: true, stats: true, absolute: true, suppressErrors: true, fs: walkGuard(ctx.signal),
-    });
+    const paths = await walk(input.pattern, cwd, ctx.signal);
     ctx.signal?.throwIfAborted();
-    entries.sort((a, b) => (b.stats?.mtimeMs ?? 0) - (a.stats?.mtimeMs ?? 0));
+    const mtimes = await Promise.all(paths.map(p => fs.stat(p).then(st => st.mtimeMs, () => 0)));
+    const entries = paths.map((path, i) => ({ path, mtime: mtimes[i] })).sort((a, b) => b.mtime - a.mtime);
     const files = entries.slice(0, 200).map(e => e.path);
     if (!files.length) return { output: 'No files found', summary: 'Found 0 files' };
     const more = entries.length > files.length ? `\n(${entries.length - files.length} more not shown)` : '';
@@ -237,7 +250,7 @@ export const GrepTool: Tool<GrepInput> = {
     const root = resolvePath(ctx, input.path);
     const stat = await fs.stat(root).catch(() => null);
     if (!stat) return { output: `Path does not exist: ${root}`, isError: true };
-    const glob = input.glob ? (input.glob.includes('/') ? input.glob : `**/${input.glob}`) : '**/*';
+    const filePattern = input.glob ? (input.glob.includes('/') ? input.glob : `**/${input.glob}`) : '**/*';
     const budget = AbortSignal.timeout(BUDGET_MS);
     const signal = AbortSignal.any([budget, ...(ctx.signal ? [ctx.signal] : [])]);
 
@@ -255,7 +268,7 @@ export const GrepTool: Tool<GrepInput> = {
     try {
       const files = stat.isFile()
         ? [root]
-        : await fg(glob, { cwd: root, ignore: IGNORE, dot: true, absolute: true, onlyFiles: true, suppressErrors: true, fs: walkGuard(signal) });
+        : await walk(filePattern, root, signal);
       signal.throwIfAborted(); // an interrupted walk ends early, perhaps with nothing listed; scanFile checks per chunk
       for (const file of files) {
         let count = 0;

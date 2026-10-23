@@ -39,16 +39,19 @@ function clip(text: string, max: number): string {
 
 /**
  * Keys typed while a prompt pops up were meant for the input box, not for the prompt: ignore keys
- * until the keyboard has been quiet for a moment after the prompt appeared.
+ * until the keyboard has been quiet for a moment after the prompt appeared. Once a key gets
+ * through, every later key counts, however fast it comes.
  */
 function useArmed(quietMs = 450) {
   const shownAt = useRef(Date.now());
   const lastKey = useRef(0);
+  const armed = useRef(false);
   return () => {
+    if (armed.current) return true;
     const now = Date.now();
-    const quiet = now - Math.max(shownAt.current, lastKey.current) >= quietMs;
+    armed.current = now - Math.max(shownAt.current, lastKey.current) >= quietMs;
     lastKey.current = now;
-    return quiet;
+    return armed.current;
   };
 }
 

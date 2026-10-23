@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 
-/** The palette: warm wood, cream, gold, with green and berry accents (Stardew Valley-inspired). */
+/** The palette: warm wood, cream and gold, with green and berry accents. */
 export const C = {
   wood: '#8B5A2B',
   woodDark: '#5C3A1A',
@@ -8,10 +8,7 @@ export const C = {
   parchment: '#F5DEB3',
   gold: '#F7C548',
   goldLight: '#FFE680',
-  goldDark: '#D08A1E',
-  copper: '#B5562A',
   grass: '#7BC043',
-  grassDark: '#4E8A2A',
   sky: '#6EC1F0',
   berry: '#D9466A',
   purple: '#A06CD5',
@@ -21,14 +18,8 @@ export const C = {
 
 export const paint = {
   wood: chalk.hex(C.wood),
-  woodLight: chalk.hex(C.woodLight),
-  parchment: chalk.hex(C.parchment),
   gold: chalk.hex(C.gold),
   grass: chalk.hex(C.grass),
-  sky: chalk.hex(C.sky),
-  berry: chalk.hex(C.berry),
-  purple: chalk.hex(C.purple),
-  stone: chalk.hex(C.stone),
   dim: chalk.hex(C.dim),
 };
 

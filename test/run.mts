@@ -1,5 +1,5 @@
 /**
- * Unit tests: npx tsx test/run.ts
+ * Unit tests: npx tsx test/run.mts
  * Small and dependency-free on purpose: each test is a named function that throws on failure.
  */
 import assert from 'node:assert/strict';

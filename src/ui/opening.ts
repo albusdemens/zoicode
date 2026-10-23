@@ -47,7 +47,7 @@ const ESU = '\x1b[?2026l';
  * The opening screen, drawn straight to the terminal (outside Ink) so the full-screen animation
  * only rewrites the lines that change. The cat holds still on the desk, fidgeting now and then,
  * and the little K on the computer spins every few seconds. Enter (or space) picks a menu item:
- * the cat gets up, walks over, hops down and lies on the prompt box. Resolves with the choice
+ * the cat crouches, hops off the desk and lands on the prompt box. Resolves with the choice
  * and the banner to keep, with the cursor parked at the top-left of the scene, ready for Ink to
  * print the very same banner and prompt over it. Resolves null if the scene doesn't fit.
  */
@@ -60,7 +60,7 @@ export function runOpening(opts: { model: string; cwd: string; canContinue: bool
   return new Promise(resolve => {
     const items = openingMenu(opts.canContinue);
     let selected = 0;
-    let catFrame = 'lie';
+    let catFrame = 'open';
     let spinStart: number | null = null;
     let leaving: { start: number; choice: OpeningChoice } | null = null;
     let prev: string[] = [];

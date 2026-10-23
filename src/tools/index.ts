@@ -11,7 +11,7 @@ import { WebFetchTool } from './web.js';
 /** Tools offered in normal operation. ExitPlanMode is added only in plan mode. */
 export const ALL_TOOLS: Tool[] = [ReadTool, WriteTool, EditTool, BashTool, GlobTool, GrepTool, LSTool, TodoWriteTool, WebFetchTool, TaskTool];
 
-export { ExitPlanModeTool, TaskTool };
+export { ExitPlanModeTool };
 
 export function findTool(name: string): Tool | undefined {
   return [...ALL_TOOLS, ExitPlanModeTool].find(t => t.name.toLowerCase() === name.toLowerCase());

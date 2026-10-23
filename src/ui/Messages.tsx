@@ -58,7 +58,7 @@ export function TodoList({ todos, max = 12 }: { todos: Todo[]; max?: number }) {
   return (
     <Box flexDirection="column" paddingLeft={2}>
       <Text color={C.gold} bold>
-        📜 Quest Log
+        📜 To-do list
       </Text>
       {start > 0 ? <Text color={C.dim}>  … {start} done above</Text> : null}
       {shown.map((t, i) => (

@@ -9,7 +9,7 @@ const STATUSES = ['pending', 'in_progress', 'completed'];
 
 /**
  * The model's list, or what is wrong with it. Open models often send the array JSON-encoded as a string, so that
- * is accepted; anything else must be rejected rather than read as an empty list, which would wipe the quest log.
+ * is accepted; anything else must be rejected rather than read as an empty list, which would wipe the to-do list.
  */
 function parseTodos(value: unknown): Todo[] | string {
   if (typeof value === 'string') {

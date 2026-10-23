@@ -4,7 +4,7 @@
  *   npx tsx scripts/sprite-preview.ts <cat|logo|computer|all> --out file.png [--scale N] [--cols N]
  *
  * Frames are drawn magnified with a faint pixel grid on three backgrounds: a dark terminal, a light
- * terminal, and the opening scene's desk. Near-actual-size copies follow each band.
+ * terminal, and the opening scene's wooden wall. Near-actual-size copies follow each band.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,7 +38,7 @@ for (const n of names) {
 const BANDS: { bg: RGB; canvas: RGB; grid: RGB; label: string }[] = [
   { label: 'dark terminal', bg: hex('#1E1E1E'), canvas: hex('#262626'), grid: hex('#303030') },
   { label: 'light terminal', bg: hex('#FAFAFA'), canvas: hex('#F0F0F0'), grid: hex('#E3E3E3') },
-  { label: 'scene desk', bg: hex('#CFC8BE'), canvas: hex('#EEE9E1'), grid: hex('#E2DCD3') },
+  { label: 'scene wall', bg: hex('#9C5B2E'), canvas: hex('#C9783A'), grid: hex('#BE6F33') }, // the desk and wall planks of ROOM in src/ui/scene.ts
 ];
 
 function drawFrame(cv: Canvas, sheet: SpriteSheet, frame: string, x0: number, y0: number, s: number, band: (typeof BANDS)[number]) {

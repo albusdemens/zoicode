@@ -5,7 +5,8 @@ Usage: tui.py <cwd> <step> [<step> ...]
 A step is either "wait:<seconds>", "until:<text>" (wait up to 120s for text on screen),
 "snap" (print the screen), "full" (scrollback + screen), "shot:<file.png>" (save the
 screen as an image), or keys to type. Keys may contain the escapes
-<enter> <esc> <tab> <stab> <up> <down> <ctrl-c> <bs>.
+<enter> <esc> <tab> <stab> <up> <down> <left> <right> <ctrl-c> <ctrl-u> <bs>.
+snap, full and shot first wait for the screen to settle, so they never show half a frame.
 """
 import os, pty, select, sys, time, signal
 RAW = open(os.environ['RAW_LOG'], 'wb') if os.environ.get('RAW_LOG') else None
@@ -13,7 +14,7 @@ import pyte
 
 COLS, ROWS = int(os.environ.get('TUI_COLS', 110)), int(os.environ.get('TUI_ROWS', 50))
 KEYS = {'<enter>': '\r', '<esc>': '\x1b', '<tab>': '\t', '<stab>': '\x1b[Z', '<up>': '\x1b[A',
-        '<down>': '\x1b[B', '<right>': '\x1b[C', '<left>': '\x1b[D', '<ctrl-c>': '\x03', '<bs>': '\x7f'}
+        '<down>': '\x1b[B', '<right>': '\x1b[C', '<left>': '\x1b[D', '<ctrl-c>': '\x03', '<ctrl-u>': '\x15', '<bs>': '\x7f'}
 CLI = os.environ.get('ZOI_CLI') or os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dist', 'cli.js')
 
 screen = pyte.HistoryScreen(COLS, ROWS, history=2000)
@@ -32,19 +33,35 @@ if pid == 0:
 import fcntl, termios, struct
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', ROWS, COLS, 0, 0))
 
+def read_once(timeout):
+    """Feeds the app's next output to the screen: None if there was none, False once it has exited."""
+    r, _, _ = select.select([fd], [], [], timeout)
+    if not r:
+        return None
+    try:
+        data = os.read(fd, 65536)
+    except OSError:
+        return False
+    if not data:
+        return False
+    stream.feed(data)
+    if RAW: RAW.write(data); RAW.flush()
+    return True
+
 def pump(seconds):
     end = time.time() + seconds
     while time.time() < end:
-        r, _, _ = select.select([fd], [], [], 0.05)
-        if r:
-            try:
-                data = os.read(fd, 65536)
-            except OSError:
-                return False
-            if not data:
-                return False
-            stream.feed(data)
-            if RAW: RAW.write(data); RAW.flush()
+        if read_once(0.05) is False:
+            return False
+    return True
+
+def settle(quiet=0.3, limit=3.0):
+    """Waits until the app has written nothing for `quiet` seconds (or `limit` passes)."""
+    end = time.time() + limit
+    while time.time() < end:
+        got = read_once(quiet)
+        if got is not True:
+            return got is None
     return True
 
 def text():
@@ -84,10 +101,13 @@ for step in sys.argv[2:]:
         if target not in text():
             print(f'!! timed out waiting for {target!r}')
     elif step == 'snap':
+        alive = settle()
         snap()
     elif step == 'full':
+        alive = settle()
         full()
     elif step.startswith('shot:'):
+        alive = settle()
         # Save the visible screen as a PNG, colors and all.
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import termshot
@@ -95,6 +115,7 @@ for step in sys.argv[2:]:
     else:
         type_keys(step)
 pump(0.5)
+settle()
 snap('final')
 try:
     os.kill(pid, signal.SIGKILL)

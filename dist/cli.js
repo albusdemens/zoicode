@@ -136,11 +136,7 @@ var init_llm = __esm({
               call = calls[tc.index] = { id: tc.id ?? `call_${tc.index}`, name: "", arguments: "" };
             }
             if (tc.id) call.id = tc.id;
-            if (tc.function?.name) {
-              const first = !call.name;
-              call.name += tc.function.name;
-              if (first) yield { type: "tool_call_start", index: tc.index, name: call.name };
-            }
+            if (tc.function?.name) call.name += tc.function.name;
             if (tc.function?.arguments) call.arguments += tc.function.arguments;
           }
           if (choice.finish_reason) finishReason = choice.finish_reason;
@@ -768,24 +764,44 @@ import fs6 from "node:fs/promises";
 import path6 from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
-import fg from "fast-glob";
-function walkGuard(signal) {
+import { glob } from "tinyglobby";
+function loopGuard() {
   const ids = /* @__PURE__ */ new Map();
-  function readdir(dir, opts, cb) {
-    const done = typeof opts === "function" ? opts : cb;
-    if (signal?.aborted) return done(null, []);
-    fsCb.stat(dir, (err, st) => {
-      if (err) return done(err);
-      const id = `${st.dev}:${st.ino}`;
-      for (let p = dir, up = path6.dirname(p); st.ino && up !== p; p = up, up = path6.dirname(p)) {
-        if (ids.get(up) === id) return done(null, []);
-      }
-      ids.set(dir, id);
-      if (typeof opts === "function") fsCb.readdir(dir, done);
-      else fsCb.readdir(dir, opts, done);
+  const idOf = (p) => {
+    let id = ids.get(p);
+    if (!id) ids.set(p, id = fs6.stat(p).then((st) => st.ino ? `${st.dev}:${st.ino}` : void 0, () => void 0));
+    return id;
+  };
+  async function loops(link, target) {
+    const st = await fs6.stat(target).catch(() => null);
+    if (!st?.isDirectory() || !st.ino) return false;
+    const id = `${st.dev}:${st.ino}`;
+    for (let dir = path6.dirname(link), up = path6.dirname(dir); ; dir = up, up = path6.dirname(dir)) {
+      if (await idOf(dir) === id) return true;
+      if (up === dir) return false;
+    }
+  }
+  function realpath(link, cb) {
+    fsCb.realpath(link, (err, resolved) => {
+      if (err) return cb(err, resolved);
+      loops(link, resolved).then(
+        (loop) => cb(loop ? Object.assign(new Error(`symlink loop at ${link}`), { code: "ELOOP" }) : null, resolved)
+      );
     });
   }
-  return { readdir };
+  return { realpath };
+}
+function walk(pattern, cwd, signal) {
+  return glob(pattern, {
+    cwd,
+    ignore: IGNORE,
+    dot: true,
+    absolute: true,
+    onlyFiles: true,
+    expandDirectories: false,
+    signal,
+    fs: loopGuard()
+  });
 }
 function lineMatcher(pattern, flags) {
   let worker;
@@ -887,17 +903,10 @@ var init_search = __esm({
       label: (i) => i.pattern + (i.path ? ` in ${i.path}` : ""),
       async run(input, ctx) {
         const cwd = resolvePath(ctx, input.path);
-        const entries = await fg(input.pattern, {
-          cwd,
-          ignore: IGNORE,
-          dot: true,
-          stats: true,
-          absolute: true,
-          suppressErrors: true,
-          fs: walkGuard(ctx.signal)
-        });
+        const paths = await walk(input.pattern, cwd, ctx.signal);
         ctx.signal?.throwIfAborted();
-        entries.sort((a, b) => (b.stats?.mtimeMs ?? 0) - (a.stats?.mtimeMs ?? 0));
+        const mtimes = await Promise.all(paths.map((p) => fs6.stat(p).then((st) => st.mtimeMs, () => 0)));
+        const entries = paths.map((path13, i) => ({ path: path13, mtime: mtimes[i] })).sort((a, b) => b.mtime - a.mtime);
         const files = entries.slice(0, 200).map((e) => e.path);
         if (!files.length) return { output: "No files found", summary: "Found 0 files" };
         const more = entries.length > files.length ? `
@@ -948,7 +957,7 @@ parentPort.on('message', ({ text, first }) => {
         const root = resolvePath(ctx, input.path);
         const stat = await fs6.stat(root).catch(() => null);
         if (!stat) return { output: `Path does not exist: ${root}`, isError: true };
-        const glob = input.glob ? input.glob.includes("/") ? input.glob : `**/${input.glob}` : "**/*";
+        const filePattern = input.glob ? input.glob.includes("/") ? input.glob : `**/${input.glob}` : "**/*";
         const budget = AbortSignal.timeout(BUDGET_MS);
         const signal = AbortSignal.any([budget, ...ctx.signal ? [ctx.signal] : []]);
         const mode = input.output_mode ?? "files_with_matches";
@@ -966,7 +975,7 @@ parentPort.on('message', ({ text, first }) => {
           signal
         };
         try {
-          const files = stat.isFile() ? [root] : await fg(glob, { cwd: root, ignore: IGNORE, dot: true, absolute: true, onlyFiles: true, suppressErrors: true, fs: walkGuard(signal) });
+          const files = stat.isFile() ? [root] : await walk(filePattern, root, signal);
           signal.throwIfAborted();
           for (const file of files) {
             let count = 0;
@@ -1955,7 +1964,8 @@ async function runSetup() {
 ${gold.bold("Welcome to Zoi Code!")} ${dim("Let's get you set up.")}
 `);
   console.log(dim("Zoi Code talks to the Raon API. Paste your API key below; it is saved to"));
-  console.log(dim(`${path9.join(CONFIG_DIR, ".env")} (readable only by you).
+  console.log(dim(`${path9.join(CONFIG_DIR, ".env")} (readable only by you).`));
+  console.log(dim(`No key yet? Get one at ${RAON_SITE}
 `));
   for (let attempt = 1; attempt <= 3; attempt++) {
     const key = await askSecret(gold("Raon API key: "));
@@ -1970,7 +1980,7 @@ Setup failed. You can also export RAON_API_KEY, or put RAON_API_KEY=<key> in ${p
   console.log(dim("(A .env file in your project is never read.)"));
   process.exit(1);
 }
-var gold, dim, berry, grass;
+var gold, dim, berry, grass, RAON_SITE;
 var init_setup = __esm({
   "src/setup.ts"() {
     "use strict";
@@ -1980,6 +1990,7 @@ var init_setup = __esm({
     dim = chalk2.hex("#8C7A6B");
     berry = chalk2.hex("#D9466A");
     grass = chalk2.hex("#7BC043");
+    RAON_SITE = "https://raon-mini.krafton.ai/en";
   }
 });
 
@@ -2026,28 +2037,28 @@ function fidget(mood, onFrame) {
     clearTimeout(timer);
   };
 }
-function useCatFrame(mood, enabled = true) {
+function useCatFrame(mood) {
   const [frame, setFrame] = useState(BASE[mood]);
-  useEffect(() => enabled ? fidget(mood, setFrame) : setFrame(BASE[mood]), [mood, enabled]);
+  useEffect(() => fidget(mood, setFrame), [mood]);
   return frame;
 }
 function catJourney(t, home, dest) {
   const J = JOURNEY;
-  if (t < J.notice) return { frame: "twitch", x: home.x, y: home.y, done: false };
+  if (t < J.notice) return { frame: "twitch", x: home.x, y: home.y };
   t -= J.notice;
-  if (t < J.crouch) return { frame: "half", x: home.x, y: home.y + 1, done: false };
+  if (t < J.crouch) return { frame: "half", x: home.x, y: home.y + 1 };
   t -= J.crouch;
   if (t < J.hop) {
     const p = t / J.hop;
     const x = home.x + (dest.x - home.x) * ease(p);
     const y = home.y + (dest.y - home.y) * p * p - 8 * Math.sin(Math.PI * Math.min(1, p * 1.3));
-    return { frame: "open", x, y, done: false };
+    return { frame: "open", x, y };
   }
   t -= J.hop;
-  if (t < J.land) return { frame: "half", x: dest.x, y: dest.y + 1, done: false };
+  if (t < J.land) return { frame: "half", x: dest.x, y: dest.y + 1 };
   t -= J.land;
-  if (t < J.settle) return { frame: "closed", x: dest.x, y: dest.y, done: false };
-  return { frame: "open", x: dest.x, y: dest.y, done: true };
+  if (t < J.settle) return { frame: "closed", x: dest.x, y: dest.y };
+  return { frame: "open", x: dest.x, y: dest.y };
 }
 var BASE, ACTIONS, ease, JOURNEY, JOURNEY_MS;
 var init_catAnim = __esm({
@@ -2060,8 +2071,7 @@ var init_catAnim = __esm({
       // tail up: listening
       happy: "closed",
       // content
-      sad: "half",
-      sleep: "closed"
+      sad: "half"
     };
     ACTIONS = [
       // a quick blink
@@ -2141,9 +2151,6 @@ var init_canvas = __esm({
         y = Math.round(y);
         if (x >= 0 && x < this.w && y >= 0 && y < this.h * 2) this.px[y * this.w + x] = c;
       }
-      get(x, y) {
-        return x >= 0 && x < this.w && y >= 0 && y < this.h * 2 ? this.px[y * this.w + x] : null;
-      }
       rect(x, y, w, h, c) {
         for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) this.pixel(xx, yy, c);
       }
@@ -2181,12 +2188,12 @@ var init_canvas = __esm({
             const bot = this.px[(row * 2 + 1) * this.w + x];
             const t = this.txt[row * this.w + x];
             let ch;
-            let fg2;
+            let fg;
             let bg;
             let bold = false;
             if (t) {
               ch = t.ch;
-              fg2 = t.fg;
+              fg = t.fg;
               bg = t.bg ?? top ?? bot ?? void 0;
               bold = !!t.bold;
             } else if (!top && !bot) {
@@ -2196,24 +2203,24 @@ var init_canvas = __esm({
               bg = top;
             } else if (top && !bot) {
               ch = "\u2580";
-              fg2 = top;
+              fg = top;
             } else if (!top && bot) {
               ch = "\u2584";
-              fg2 = bot;
+              fg = bot;
             } else {
               ch = "\u2580";
-              fg2 = top;
+              fg = top;
               bg = bot;
             }
-            const k = `${fg2 ?? ""}|${bg ?? ""}|${bold ? 1 : 0}`;
+            const k = `${fg ?? ""}|${bg ?? ""}|${bold ? 1 : 0}`;
             if (k !== key) {
               flush();
               key = k;
               let s = ink;
-              if (fg2) s = s.hex(fg2);
+              if (fg) s = s.hex(fg);
               if (bg) s = s.bgHex(bg);
               if (bold) s = s.bold;
-              style = fg2 || bg || bold ? s : null;
+              style = fg || bg || bold ? s : null;
             }
             run += ch;
           }
@@ -2534,12 +2541,9 @@ var init_logo = __esm({
 });
 
 // src/ui/sprites/types.ts
-function sheetGrid(sheet, frame, flipX = false) {
+function sheetGrid(sheet, frame) {
   const rows = sheet.frames[frame] ?? sheet.frames[Object.keys(sheet.frames)[0]];
-  return rows.map((r) => {
-    const cells = [...r].map((ch) => ch === "." ? null : sheet.palette[ch] ?? null);
-    return flipX ? cells.reverse() : cells;
-  });
+  return rows.map((r) => [...r].map((ch) => ch === "." ? null : sheet.palette[ch] ?? null));
 }
 function keyRect(sheet, frame, key) {
   let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
@@ -2744,10 +2748,7 @@ var init_theme = __esm({
       parchment: "#F5DEB3",
       gold: "#F7C548",
       goldLight: "#FFE680",
-      goldDark: "#D08A1E",
-      copper: "#B5562A",
       grass: "#7BC043",
-      grassDark: "#4E8A2A",
       sky: "#6EC1F0",
       berry: "#D9466A",
       purple: "#A06CD5",
@@ -2756,14 +2757,8 @@ var init_theme = __esm({
     };
     paint = {
       wood: chalk5.hex(C.wood),
-      woodLight: chalk5.hex(C.woodLight),
-      parchment: chalk5.hex(C.parchment),
       gold: chalk5.hex(C.gold),
       grass: chalk5.hex(C.grass),
-      sky: chalk5.hex(C.sky),
-      berry: chalk5.hex(C.berry),
-      purple: chalk5.hex(C.purple),
-      stone: chalk5.hex(C.stone),
       dim: chalk5.hex(C.dim)
     };
     SPINNER_VERBS = [
@@ -3264,7 +3259,7 @@ function TodoList({ todos, max = 12 }) {
   const start = Math.max(0, Math.min(current - 2, todos.length - max));
   const shown = todos.slice(start, start + max);
   return /* @__PURE__ */ jsxs2(Box2, { flexDirection: "column", paddingLeft: 2, children: [
-    /* @__PURE__ */ jsx2(Text2, { color: C.gold, bold: true, children: "\u{1F4DC} Quest Log" }),
+    /* @__PURE__ */ jsx2(Text2, { color: C.gold, bold: true, children: "\u{1F4DC} To-do list" }),
     start > 0 ? /* @__PURE__ */ jsxs2(Text2, { color: C.dim, children: [
       "  \u2026 ",
       start,
@@ -3413,11 +3408,13 @@ function clip(text, max) {
 function useArmed(quietMs = 450) {
   const shownAt = useRef(Date.now());
   const lastKey = useRef(0);
+  const armed = useRef(false);
   return () => {
+    if (armed.current) return true;
     const now = Date.now();
-    const quiet = now - Math.max(shownAt.current, lastKey.current) >= quietMs;
+    armed.current = now - Math.max(shownAt.current, lastKey.current) >= quietMs;
     lastKey.current = now;
-    return quiet;
+    return armed.current;
   };
 }
 function PermissionPrompt({
@@ -3531,18 +3528,52 @@ import { useRef as useRef2, useState as useState3 } from "react";
 import { Box as Box4, Text as Text4, useInput as useInput2 } from "ink";
 import chalk7 from "chalk";
 import { jsx as jsx4, jsxs as jsxs4 } from "react/jsx-runtime";
+function menuWindow(count, selected) {
+  const start = Math.max(0, Math.min(selected - MAX_SUGGESTIONS + 1, count - MAX_SUGGESTIONS));
+  const end = Math.min(count, start + MAX_SUGGESTIONS);
+  return { start, end, rows: end - start + (start > 0 ? 1 : 0) + (end < count ? 1 : 0) };
+}
+function SuggestionMenu({ matches, selected }) {
+  const { start, end } = menuWindow(matches.length, selected);
+  if (start === end) return null;
+  return /* @__PURE__ */ jsxs4(Box4, { flexDirection: "column", paddingX: 2, children: [
+    start > 0 ? /* @__PURE__ */ jsxs4(Text4, { color: C.dim, children: [
+      "  \u2191 ",
+      start,
+      " more"
+    ] }) : null,
+    matches.slice(start, end).map((m, i) => /* @__PURE__ */ jsxs4(Text4, { color: start + i === selected ? C.gold : C.dim, wrap: "truncate-end", children: [
+      start + i === selected ? "\u276F " : "  ",
+      ("/" + m.name).padEnd(14),
+      " ",
+      m.description
+    ] }, m.name)),
+    end < matches.length ? /* @__PURE__ */ jsxs4(Text4, { color: C.dim, children: [
+      "  \u2193 ",
+      matches.length - end,
+      " more"
+    ] }) : null
+  ] });
+}
 function modeOf(value) {
   if (value.startsWith("!")) return { glyph: "!", color: C.berry, hint: "bash mode" };
   if (value.startsWith("#")) return { glyph: "#", color: C.purple, hint: "memory mode \xB7 saved to ZOICODE.md" };
   if (value.startsWith("/")) return { glyph: "\u203A", color: C.sky, hint: "" };
   return { glyph: "\u203A", color: C.gold, hint: "" };
 }
-function PromptInput({ active, history, suggestions, onSubmit, onKey }) {
+function PromptInput({ active, history, suggestions, onSubmit, onKey, onStatus }) {
   const st = useRef2({ value: "", cursor: 0, histIdx: -1, draft: "", selected: 0, recalled: false });
   const [, rerender] = useState3(0);
+  const reported = useRef2("");
   const update = (patch) => {
     Object.assign(st.current, patch);
     rerender((n) => n + 1);
+    const matches = matchesOf(st.current);
+    const mode2 = modeOf(st.current.value);
+    const key = `${st.current.selected}|${mode2.hint}|${matches.map((m) => m.name).join(" ")}`;
+    if (key === reported.current) return;
+    reported.current = key;
+    onStatus?.({ matches, selected: st.current.selected, hint: mode2.hint ? { text: mode2.hint, color: mode2.color } : void 0 });
   };
   const setValue = (value2, cursor2 = value2.length) => update({ value: value2, cursor: Math.max(0, Math.min(cursor2, value2.length)), selected: 0, recalled: false });
   const matchesOf = (s) => s.value.startsWith("/") && !s.value.includes(" ") && !s.recalled ? suggestions(s.value) : [];
@@ -3554,23 +3585,23 @@ function PromptInput({ active, history, suggestions, onSubmit, onKey }) {
     (input, key) => {
       const s = st.current;
       if (onKey?.(input, key, s.value, (v) => setValue(v))) return;
-      const matches2 = matchesOf(s);
-      if (key.tab && matches2.length) return setValue("/" + matches2[s.selected].name + " ");
+      const matches = matchesOf(s);
+      if (key.tab && matches.length) return setValue("/" + matches[s.selected].name + " ");
       if (key.return) {
         if (s.value.endsWith("\\")) return setValue(s.value.slice(0, -1) + "\n");
-        const v = matches2.length ? "/" + matches2[s.selected].name : s.value;
+        const v = matches.length ? "/" + matches[s.selected].name : s.value;
         if (!v.trim()) return;
         update({ value: "", cursor: 0, histIdx: -1, draft: "", selected: 0, recalled: false });
         onSubmit(v.trim());
         return;
       }
       if (key.upArrow) {
-        if (matches2.length) return update({ selected: (s.selected - 1 + matches2.length) % matches2.length });
+        if (matches.length) return update({ selected: (s.selected - 1 + matches.length) % matches.length });
         if (!history.length) return;
         return recall(Math.min(history.length - 1, s.histIdx + 1), s.histIdx === -1 ? { draft: s.value } : {});
       }
       if (key.downArrow) {
-        if (matches2.length) return update({ selected: (s.selected + 1) % matches2.length });
+        if (matches.length) return update({ selected: (s.selected + 1) % matches.length });
         if (s.histIdx > 0) return recall(s.histIdx - 1);
         if (s.histIdx === 0) update({ histIdx: -1, value: s.draft, cursor: s.draft.length, recalled: false });
         return;
@@ -3600,43 +3631,19 @@ function PromptInput({ active, history, suggestions, onSubmit, onKey }) {
     },
     { isActive: active }
   );
-  const { value, cursor, selected } = st.current;
-  const matches = matchesOf(st.current);
+  const { value, cursor } = st.current;
   const mode = modeOf(value);
   const at = value[cursor] ?? " ";
   const shown = active ? value.slice(0, cursor) + chalk7.inverse(at === "\n" ? " " : at) + (at === "\n" ? "\n" : "") + value.slice(cursor + 1) : value;
-  const start = Math.max(0, Math.min(selected - MAX_SUGGESTIONS + 1, matches.length - MAX_SUGGESTIONS));
-  const visible = matches.slice(start, start + MAX_SUGGESTIONS);
-  return /* @__PURE__ */ jsxs4(Box4, { flexDirection: "column", children: [
-    /* @__PURE__ */ jsxs4(Box4, { borderStyle: "round", borderColor: active ? mode.color === C.gold ? C.woodLight : mode.color : C.woodDark, paddingX: 1, children: [
-      /* @__PURE__ */ jsxs4(Text4, { color: mode.color, bold: true, children: [
-        mode.glyph,
-        " "
-      ] }),
-      /* @__PURE__ */ jsx4(Box4, { flexGrow: 1, children: value ? /* @__PURE__ */ jsx4(Text4, { children: shown }) : /* @__PURE__ */ jsxs4(Text4, { color: C.dim, children: [
-        active ? chalk7.inverse(" ") : "",
-        active ? "Type a request\u2026 (/ for commands, @ to mention files)" : ""
-      ] }) })
+  return /* @__PURE__ */ jsxs4(Box4, { borderStyle: "round", borderColor: active ? mode.color === C.gold ? C.woodLight : mode.color : C.woodDark, paddingX: 1, children: [
+    /* @__PURE__ */ jsxs4(Text4, { color: mode.color, bold: true, children: [
+      mode.glyph,
+      " "
     ] }),
-    mode.hint ? /* @__PURE__ */ jsx4(Box4, { paddingX: 2, children: /* @__PURE__ */ jsx4(Text4, { color: mode.color, children: mode.hint }) }) : null,
-    visible.length > 0 && /* @__PURE__ */ jsxs4(Box4, { flexDirection: "column", paddingX: 2, children: [
-      start > 0 ? /* @__PURE__ */ jsxs4(Text4, { color: C.dim, children: [
-        "  \u2191 ",
-        start,
-        " more"
-      ] }) : null,
-      visible.map((m, i) => /* @__PURE__ */ jsxs4(Text4, { color: start + i === selected ? C.gold : C.dim, wrap: "truncate-end", children: [
-        start + i === selected ? "\u276F " : "  ",
-        ("/" + m.name).padEnd(14),
-        " ",
-        m.description
-      ] }, m.name)),
-      start + MAX_SUGGESTIONS < matches.length ? /* @__PURE__ */ jsxs4(Text4, { color: C.dim, children: [
-        "  \u2193 ",
-        matches.length - start - MAX_SUGGESTIONS,
-        " more"
-      ] }) : null
-    ] })
+    /* @__PURE__ */ jsx4(Box4, { flexGrow: 1, children: value ? /* @__PURE__ */ jsx4(Text4, { children: shown }) : /* @__PURE__ */ jsxs4(Text4, { color: C.dim, children: [
+      active ? chalk7.inverse(" ") : "",
+      active ? "Type a request\u2026 (/ for commands, @ to mention files)" : ""
+    ] }) })
   ] });
 }
 var MAX_SUGGESTIONS;
@@ -3648,11 +3655,49 @@ var init_PromptInput = __esm({
   }
 });
 
+// src/ui/pinBottom.ts
+function pinToBottom(live, rows) {
+  let root = live;
+  while (root.parentNode) root = root.parentNode;
+  const layout = root.onComputeLayout;
+  const box = live.yogaNode;
+  if (typeof layout !== "function" || !box || typeof box.setMinHeight !== "function") {
+    return { refill() {
+    }, release() {
+    } };
+  }
+  let keep = rows() - 1;
+  const pinned = () => {
+    layout();
+    try {
+      const printed = root.staticNode?.yogaNode?.getComputedHeight() ?? 0;
+      box.setMinHeight(Math.max(0, Math.min(rows() - 1, keep - printed)));
+      layout();
+      keep = box.getComputedHeight();
+    } catch {
+    }
+  };
+  root.onComputeLayout = pinned;
+  return {
+    refill() {
+      keep = rows() - 1;
+    },
+    release() {
+      if (root.onComputeLayout === pinned) root.onComputeLayout = layout;
+    }
+  };
+}
+var init_pinBottom = __esm({
+  "src/ui/pinBottom.ts"() {
+    "use strict";
+  }
+});
+
 // src/ui/App.tsx
-import { useEffect as useEffect2, useRef as useRef3, useState as useState4 } from "react";
+import { useEffect as useEffect2, useLayoutEffect, useRef as useRef3, useState as useState4 } from "react";
 import fs11 from "node:fs";
 import path12 from "node:path";
-import { Box as Box5, Static, Text as Text5, useApp, useStdout } from "ink";
+import { Box as Box5, Static, Text as Text5, useApp, useInput as useInput3, useStdout } from "ink";
 import wrapAnsi2 from "wrap-ansi";
 import { jsx as jsx5, jsxs as jsxs5 } from "react/jsx-runtime";
 function itemsFromMessages(messages) {
@@ -3743,6 +3788,7 @@ function App({ agent, session: initialSession, initialPrompt, banner, makeBanner
     ...initialSession.messages.length ? [{ kind: "info", id: uid(), text: `\u21BA Resumed session ${initialSession.id}`, color: C.grass }] : []
   ]);
   const [staticKey, setStaticKey] = useState4(0);
+  const [ready, setReady] = useState4(false);
   const [busy, setBusy] = useState4(false);
   const [frame, setFrame] = useState4(0);
   const [running, setRunning] = useState4([]);
@@ -3757,6 +3803,7 @@ function App({ agent, session: initialSession, initialPrompt, banner, makeBanner
   const skippedCommands = useRef3([]);
   const [commands] = useState4(() => [...COMMANDS, ...loadCustomCommands(agent.cwd, skippedCommands.current)]);
   const [mood, setMood] = useState4("idle");
+  const [inputStatus, setInputStatus] = useState4({ matches: [], selected: 0 });
   const [say, setSay] = useState4(null);
   const [modes] = useState4(
     () => agent.permissionMode === "bypass" ? ["default", "acceptEdits", "plan", "bypass"] : ["default", "acceptEdits", "plan"]
@@ -3770,6 +3817,8 @@ function App({ agent, session: initialSession, initialPrompt, banner, makeBanner
   const sayTimer = useRef3(void 0);
   const moodTimer = useRef3(void 0);
   const exitTimer = useRef3(void 0);
+  const liveBox = useRef3(null);
+  const pin = useRef3(null);
   const push = (...more) => setItems((prev) => [...prev, ...more]);
   const info = (text, color) => push({ kind: "info", id: uid(), text, color });
   const speak = (text, ms = 4500) => {
@@ -3802,9 +3851,16 @@ function App({ agent, session: initialSession, initialPrompt, banner, makeBanner
   };
   const resetScreen = (next) => {
     process.stdout.write("\x1B[2J\x1B[3J\x1B[H");
+    pin.current?.refill();
     setStaticKey((k) => k + 1);
     setItems([{ kind: "banner", id: uid(), lines: makeBanner2() }, ...next]);
   };
+  useLayoutEffect(() => {
+    const p = liveBox.current ? pinToBottom(liveBox.current, () => stdout.rows || 24) : null;
+    pin.current = p;
+    setReady(true);
+    return () => p?.release();
+  }, []);
   useEffect2(() => {
     if (busy) {
       clearTimeout(moodTimer.current);
@@ -3983,7 +4039,7 @@ function App({ agent, session: initialSession, initialPrompt, banner, makeBanner
     }
   }
   async function runBang(command) {
-    const ac = beginWork("Digging");
+    const ac = beginWork("Running");
     try {
       const result = await BashTool.run({ command }, { ...agent.ctx, signal: ac.signal });
       push({ kind: "bash", id: uid(), command, output: result.output, isError: !!result.isError });
@@ -4140,6 +4196,22 @@ function App({ agent, session: initialSession, initialPrompt, banner, makeBanner
   const cols = stdout.columns || 80;
   const modeLabel = MODE_LABEL[mode] ?? MODE_LABEL.default;
   const prompting = !!(permission || planApproval);
+  useInput3(
+    (input, key) => {
+      if (!(key.ctrl && input === "c")) return;
+      if (exitArmed) return void shutdown();
+      controller.current?.abort();
+      permission?.resolve("deny");
+      planApproval?.resolve("keep");
+      setExitArmed(true);
+      clearTimeout(exitTimer.current);
+      exitTimer.current = setTimeout(() => setExitArmed(false), 2e3);
+    },
+    { isActive: prompting }
+  );
+  const menu = !prompting && inputStatus.matches.length ? inputStatus : null;
+  const menuRows = menu ? menuWindow(menu.matches.length, menu.selected).rows : 0;
+  const hint = prompting ? void 0 : inputStatus.hint;
   const petHeight = PET_ROWS;
   const petWidth = CAT_W + PET_MARGIN;
   const petShown = cols >= petWidth + 40 && rows >= petHeight + 8 && (!prompting || rows >= petHeight + 20);
@@ -4149,64 +4221,68 @@ function App({ agent, session: initialSession, initialPrompt, banner, makeBanner
   const todoMax = Math.max(3, Math.min(12, Math.floor((rows - 20) / 2)));
   const showTodos = busy && !prompting && todos.some((t) => t.status !== "completed");
   const todoRows = showTodos ? Math.min(todos.length, todoMax) + 3 : 0;
-  const sideRows = runningRows + todoRows + (queue.length ? 1 : 0) + (say ? 3 : 0) + (showSpinner ? 2 : 0) + 2;
+  const sideRows = runningRows + todoRows + (queue.length ? 1 : 0) + (say ? 3 : 0) + (showSpinner ? 2 : 0) + menuRows + 2;
   const textBudget = rows - 1 - (PROMPT_ROWS_UI + 1) - sideRows - 1;
   const promptBudget = rows - 1 - (petShown ? petHeight : 0) - 1 - 2;
   const reasoningTail = sanitize(l.reasoning.trim().split("\n").filter(Boolean).slice(-2).join(" ")).slice(-leftWidth + 10);
   const streaming = busy && l.text && textBudget >= 3 ? tail(bulleted(renderMarkdown(sanitize(l.text), leftWidth - 2), paint.grass("\u23FA "), leftWidth), leftWidth, textBudget) : "";
   const usage = (agent.totalUsage.promptTokens + agent.totalUsage.completionTokens).toLocaleString();
-  const left = exitArmed ? "Press Ctrl-C again to quit" : modeLabel.text ? `${modeLabel.text} (shift+tab to cycle)` : busy ? "esc to interrupt \xB7 type to queue a message" : "? /help for commands";
+  const left = exitArmed ? "Press Ctrl-C again to quit" : hint ? hint.text : modeLabel.text ? `${modeLabel.text} (shift+tab to cycle)` : busy ? "esc to interrupt \xB7 type to queue a message" : "? /help for commands";
   return /* @__PURE__ */ jsxs5(Box5, { flexDirection: "column", children: [
-    /* @__PURE__ */ jsx5(Static, { items, children: (item) => /* @__PURE__ */ jsx5(Box5, { flexDirection: "column", children: /* @__PURE__ */ jsx5(MessageItem, { item, cwd: agent.cwd }) }, item.id) }, staticKey),
-    /* @__PURE__ */ jsxs5(Box5, { flexDirection: "row", alignItems: "flex-end", children: [
-      /* @__PURE__ */ jsxs5(Box5, { flexDirection: "column", width: leftWidth, minHeight: petShown ? petHeight : 0, justifyContent: "flex-end", children: [
-        busy && reasoningTail && !l.text && !prompting ? /* @__PURE__ */ jsx5(Box5, { marginTop: 1, children: /* @__PURE__ */ jsxs5(Text5, { color: C.dim, italic: true, wrap: "truncate-end", children: [
-          "\u273B ",
-          reasoningTail
-        ] }) }) : null,
-        streaming && !prompting ? /* @__PURE__ */ jsx5(Box5, { marginTop: 1, children: /* @__PURE__ */ jsx5(Text5, { children: streaming }) }) : null,
-        running.map((t) => /* @__PURE__ */ jsx5(ToolLine, { item: t, cwd: agent.cwd }, t.id)),
-        showTodos ? /* @__PURE__ */ jsx5(Box5, { marginTop: 1, children: /* @__PURE__ */ jsx5(TodoList, { todos, max: todoMax }) }) : null,
-        queue.length > 0 ? /* @__PURE__ */ jsx5(Box5, { paddingLeft: 2, children: /* @__PURE__ */ jsxs5(Text5, { color: C.dim, wrap: "truncate-end", children: [
-          "\u23F3 queued: ",
-          queue.map((q) => sanitize(q.display)).join(" \xB7 ")
-        ] }) }) : null,
-        say && petShown ? /* @__PURE__ */ jsx5(Box5, { justifyContent: "flex-end", children: /* @__PURE__ */ jsx5(Bubble, { text: say }) }) : null,
-        showSpinner ? /* @__PURE__ */ jsx5(Spinner, { frame, verb: l.verb, started: l.started, tokens: l.outTokens }) : null
+    /* @__PURE__ */ jsx5(Static, { items: ready ? items : [], children: (item) => /* @__PURE__ */ jsx5(Box5, { flexDirection: "column", children: /* @__PURE__ */ jsx5(MessageItem, { item, cwd: agent.cwd }) }, item.id) }, staticKey),
+    /* @__PURE__ */ jsxs5(Box5, { ref: liveBox, flexDirection: "column", justifyContent: "flex-end", display: ready ? "flex" : "none", children: [
+      /* @__PURE__ */ jsxs5(Box5, { flexDirection: "row", alignItems: "flex-end", children: [
+        /* @__PURE__ */ jsxs5(Box5, { flexDirection: "column", width: leftWidth, minHeight: petShown ? petHeight : 0, justifyContent: "flex-end", children: [
+          busy && reasoningTail && !l.text && !prompting ? /* @__PURE__ */ jsx5(Box5, { marginTop: 1, children: /* @__PURE__ */ jsxs5(Text5, { color: C.dim, italic: true, wrap: "truncate-end", children: [
+            "\u273B ",
+            reasoningTail
+          ] }) }) : null,
+          streaming && !prompting ? /* @__PURE__ */ jsx5(Box5, { marginTop: 1, children: /* @__PURE__ */ jsx5(Text5, { children: streaming }) }) : null,
+          running.map((t) => /* @__PURE__ */ jsx5(ToolLine, { item: t, cwd: agent.cwd }, t.id)),
+          showTodos ? /* @__PURE__ */ jsx5(Box5, { marginTop: 1, children: /* @__PURE__ */ jsx5(TodoList, { todos, max: todoMax }) }) : null,
+          queue.length > 0 ? /* @__PURE__ */ jsx5(Box5, { paddingLeft: 2, children: /* @__PURE__ */ jsxs5(Text5, { color: C.dim, wrap: "truncate-end", children: [
+            "\u23F3 queued: ",
+            queue.map((q) => sanitize(q.display)).join(" \xB7 ")
+          ] }) }) : null,
+          say && petShown ? /* @__PURE__ */ jsx5(Box5, { justifyContent: "flex-end", children: /* @__PURE__ */ jsx5(Bubble, { text: say }) }) : null,
+          showSpinner ? /* @__PURE__ */ jsx5(Spinner, { frame, verb: l.verb, started: l.started, tokens: l.outTokens }) : null,
+          menu ? /* @__PURE__ */ jsx5(SuggestionMenu, { matches: menu.matches, selected: menu.selected }) : null
+        ] }),
+        petShown ? /* @__PURE__ */ jsx5(CatCompanion, { mood }) : null
       ] }),
-      petShown ? /* @__PURE__ */ jsx5(CatCompanion, { mood }) : null
-    ] }),
-    planApproval ? /* @__PURE__ */ jsx5(PlanApproval, { plan: planApproval.plan, maxLines: promptBudget, onAnswer: planApproval.resolve }) : permission ? /* @__PURE__ */ jsx5(
-      PermissionPrompt,
-      {
-        tool: permission.tool,
-        input: permission.input,
-        cwd: agent.cwd,
-        rules: permission.rules,
-        maxLines: promptBudget,
-        onAnswer: permission.resolve
-      }
-    ) : null,
-    /* @__PURE__ */ jsx5(Box5, { display: prompting ? "none" : "flex", flexDirection: "column", children: /* @__PURE__ */ jsx5(
-      PromptInput,
-      {
-        active: !prompting,
-        history,
-        suggestions: (v) => suggestCommands(v, commands),
-        onSubmit: submit,
-        onKey
-      }
-    ) }),
-    /* @__PURE__ */ jsxs5(Box5, { paddingX: 2, height: 1, children: [
-      /* @__PURE__ */ jsx5(Box5, { flexGrow: 1, flexShrink: 1, children: /* @__PURE__ */ jsx5(Text5, { color: exitArmed ? C.berry : modeLabel.color, wrap: "truncate-end", children: left }) }),
-      /* @__PURE__ */ jsx5(Box5, { flexShrink: 0, children: /* @__PURE__ */ jsxs5(Text5, { color: C.dim, children: [
-        /* @__PURE__ */ jsx5(ContextMeter, { used: agent.contextTokens, total: agent.llm.config.contextWindow }),
-        cols >= 90 ? /* @__PURE__ */ jsxs5(Text5, { color: C.dim, children: [
-          "  ",
-          usage,
-          " tokens"
-        ] }) : null
-      ] }) })
+      planApproval ? /* @__PURE__ */ jsx5(PlanApproval, { plan: planApproval.plan, maxLines: promptBudget, onAnswer: planApproval.resolve }) : permission ? /* @__PURE__ */ jsx5(
+        PermissionPrompt,
+        {
+          tool: permission.tool,
+          input: permission.input,
+          cwd: agent.cwd,
+          rules: permission.rules,
+          maxLines: promptBudget,
+          onAnswer: permission.resolve
+        }
+      ) : null,
+      /* @__PURE__ */ jsx5(Box5, { display: prompting ? "none" : "flex", flexDirection: "column", children: /* @__PURE__ */ jsx5(
+        PromptInput,
+        {
+          active: !prompting,
+          history,
+          suggestions: (v) => suggestCommands(v, commands),
+          onSubmit: submit,
+          onKey,
+          onStatus: setInputStatus
+        }
+      ) }),
+      /* @__PURE__ */ jsxs5(Box5, { paddingX: 2, height: 1, children: [
+        /* @__PURE__ */ jsx5(Box5, { flexGrow: 1, flexShrink: 1, children: /* @__PURE__ */ jsx5(Text5, { color: exitArmed ? C.berry : hint ? hint.color : modeLabel.color, wrap: "truncate-end", children: left }) }),
+        /* @__PURE__ */ jsx5(Box5, { flexShrink: 0, children: /* @__PURE__ */ jsxs5(Text5, { color: C.dim, children: [
+          /* @__PURE__ */ jsx5(ContextMeter, { used: agent.contextTokens, total: agent.llm.config.contextWindow }),
+          cols >= 90 ? /* @__PURE__ */ jsxs5(Text5, { color: C.dim, children: [
+            "  ",
+            usage,
+            " tokens"
+          ] }) : null
+        ] }) })
+      ] })
     ] })
   ] });
 }
@@ -4223,6 +4299,7 @@ var init_App = __esm({
     init_Messages();
     init_Permission();
     init_PromptInput();
+    init_pinBottom();
     init_sanitize();
     init_scene();
     init_sprites();
@@ -4278,7 +4355,7 @@ function runOpening(opts) {
   return new Promise((resolve) => {
     const items = openingMenu(opts.canContinue);
     let selected = 0;
-    let catFrame = "lie";
+    let catFrame = "open";
     let spinStart = null;
     let leaving = null;
     let prev = [];
@@ -4337,14 +4414,14 @@ function runOpening(opts) {
       stdin.setRawMode(false);
       stdin.pause();
     };
-    const walk = () => {
+    const walk2 = () => {
       if (draw()) {
         cleanup();
         out.write("\x1B[1;1H");
         resolve({ choice: leaving.choice, banner: renderBanner(layout, infoLines(opts.model, opts.cwd, leaving.choice)) });
         return;
       }
-      later(walk, 40);
+      later(walk2, 40);
     };
     const onKey = (data) => {
       const key = data.toString("utf8");
@@ -4358,7 +4435,7 @@ function runOpening(opts) {
       else if (key === "\x1B[B" || key === "j" || key === "	") selected = (selected + 1) % items.length;
       else if (key === "\r" || key === "\n" || key === " ") {
         leaving = { start: Date.now(), choice: items[selected].id };
-        return walk();
+        return walk2();
       } else return;
       draw();
     };

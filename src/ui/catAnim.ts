@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-export type CatMood = 'idle' | 'working' | 'alert' | 'happy' | 'sad' | 'sleep';
+export type CatMood = 'idle' | 'working' | 'alert' | 'happy' | 'sad';
 
 type Step = [frame: string, ms: number];
 
@@ -10,7 +10,6 @@ const BASE: Record<CatMood, string> = {
   alert: 'twitch', // tail up: listening
   happy: 'closed', // content
   sad: 'half',
-  sleep: 'closed',
 };
 
 /** Little things the cat does now and then; the subtle ones are the most frequent. */
@@ -73,9 +72,9 @@ export function fidget(mood: CatMood, onFrame: (frame: string) => void): () => v
 }
 
 /** The cat's current frame, for React components. */
-export function useCatFrame(mood: CatMood, enabled = true): string {
+export function useCatFrame(mood: CatMood): string {
   const [frame, setFrame] = useState(BASE[mood]);
-  useEffect(() => (enabled ? fidget(mood, setFrame) : setFrame(BASE[mood])), [mood, enabled]);
+  useEffect(() => fidget(mood, setFrame), [mood]);
   return frame;
 }
 
@@ -83,7 +82,6 @@ export interface CatPose {
   frame: string;
   x: number;
   y: number;
-  done: boolean;
 }
 
 const ease = (p: number) => (p < 0.5 ? 2 * p * p : 1 - (-2 * p + 2) ** 2 / 2);
@@ -99,20 +97,20 @@ export const JOURNEY_MS = Object.values(JOURNEY).reduce((a, b) => a + b, 0);
  */
 export function catJourney(t: number, home: { x: number; y: number }, dest: { x: number; y: number }): CatPose {
   const J = JOURNEY;
-  if (t < J.notice) return { frame: 'twitch', x: home.x, y: home.y, done: false };
+  if (t < J.notice) return { frame: 'twitch', x: home.x, y: home.y };
   t -= J.notice;
-  if (t < J.crouch) return { frame: 'half', x: home.x, y: home.y + 1, done: false };
+  if (t < J.crouch) return { frame: 'half', x: home.x, y: home.y + 1 };
   t -= J.crouch;
   if (t < J.hop) {
     const p = t / J.hop;
     const x = home.x + (dest.x - home.x) * ease(p);
     // An arc: up about 8 px above the desk, then down to the prompt box.
     const y = home.y + (dest.y - home.y) * p * p - 8 * Math.sin(Math.PI * Math.min(1, p * 1.3));
-    return { frame: 'open', x, y, done: false };
+    return { frame: 'open', x, y };
   }
   t -= J.hop;
-  if (t < J.land) return { frame: 'half', x: dest.x, y: dest.y + 1, done: false };
+  if (t < J.land) return { frame: 'half', x: dest.x, y: dest.y + 1 };
   t -= J.land;
-  if (t < J.settle) return { frame: 'closed', x: dest.x, y: dest.y, done: false };
-  return { frame: 'open', x: dest.x, y: dest.y, done: true };
+  if (t < J.settle) return { frame: 'closed', x: dest.x, y: dest.y };
+  return { frame: 'open', x: dest.x, y: dest.y };
 }

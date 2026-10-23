@@ -45,13 +45,13 @@
     "cli-highlight": "^2.1.11",
     "commander": "^15.0.0",
     "diff": "^9.0.0",
-    "fast-glob": "^3.3.3",
     "ink": "^6.8.0",
     "marked": "^15.0.12",
     "marked-terminal": "^7.3.0",
     "openai": "^7.43.0",
     "react": "^19.3.1",
     "string-width": "^8.3.0",
+    "tinyglobby": "^0.2.17",
     "wrap-ansi": "^9.0.2"
   },
   "devDependencies": {
@@ -62,5 +62,8 @@
     "esbuild": "^0.28.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
   }
 }

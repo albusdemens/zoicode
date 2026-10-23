@@ -1,20 +1,25 @@
 <p align="center"><img src="art/logo.png" alt="Zoi Code" width="520"></p>
-<p align="center"><b>A cozy coding agent for your terminal, powered by Raon.</b></p>
+<p align="center"><b>A cozy coding agent for your terminal, powered by <a href="https://raon-mini.krafton.ai/en">Raon</a>.</b></p>
 
 ## Install
 
-You need Node.js 22.12+ and a Raon API key.
+You need Linux, macOS or WSL, Node.js 22.12+, and a Raon API key (apply on the
+[Raon site](https://raon-mini.krafton.ai/en), then create one in the Raon console).
 
 ```sh
-npm install -g https://github.com/albusdemens/zoicode/archive/refs/heads/main.tar.gz
+npm install -g --no-fund https://github.com/albusdemens/zoicode/archive/refs/heads/main.tar.gz
 ```
+
+npm ends with a line like `added 98 packages in 6s`. Run it again to update. (If it fails with
+`EACCES`, install Node with [nvm](https://github.com/nvm-sh/nvm) or Homebrew, so global installs don't need sudo.)
 
 Then run `zoicode` in your project folder. The first time, it asks for your API key and saves it
 to `~/.zoicode/.env`. You can also set `RAON_API_KEY` instead.
 
-Maximize your terminal first: the opening scene needs 116×42.
+Maximize your terminal first: the opening scene needs 116×42. On macOS, iTerm2, Ghostty or WezTerm
+show the colors best.
 
-<p align="center"><img src="docs/session.png" alt="Zoi Code editing a file, with the cat above the prompt" width="75%"></p>
+<p align="center"><img src="docs/session.png" alt="Zoi Code asking before it runs a command, with the cat above the prompt" width="75%"></p>
 
 ## Use
 

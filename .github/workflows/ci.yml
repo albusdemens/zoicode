@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }}, Node ${{ matrix.node }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+      # macOS ships bash 3.2 as /bin/bash, and that is what most Macs run; the runner puts a newer one first.
+      - name: Bash tool with the system bash
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p "$RUNNER_TEMP/sysbash" && ln -sf /bin/bash "$RUNNER_TEMP/sysbash/bash"
+          export PATH="$RUNNER_TEMP/sysbash:$PATH"
+          bash --version | head -1
+          npx tsx test/bash.mts
+
+      - name: The committed build matches the source
+        if: runner.os == 'Linux'
+        run: npm run build && git diff --exit-code dist/cli.js
+
+      - name: Install the package and run it
+        run: |
+          npm pack --silent
+          npm install -g --no-fund ./zoicode-*.tgz
+          zoicode --version
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Drive the installed app in a pseudo-terminal
+        run: |
+          pip install --quiet pyte
+          mkdir -p "$RUNNER_TEMP/sysbash" && ln -sf /bin/bash "$RUNNER_TEMP/sysbash/bash"
+          PATH="$RUNNER_TEMP/sysbash:$PATH" test/ui-smoke.sh "$(npm root -g)/zoicode/dist/cli.js"
