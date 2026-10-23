@@ -24,6 +24,9 @@ pid, fd = pty.fork()
 if pid == 0:
     os.chdir(sys.argv[1])
     os.environ.update(TERM='xterm-256color', COLUMNS=str(COLS), LINES=str(ROWS), FORCE_COLOR='3')
+    # This is an interactive terminal even on a CI runner: with CI set, Ink prints only the final frame.
+    for k in ('CI', 'CONTINUOUS_INTEGRATION'):
+        os.environ.pop(k, None)
     if os.environ.get('ZOI_TEST_HOME'):
         # Keep test runs from touching the real ~/.zoicode.
         os.makedirs(os.environ['ZOI_TEST_HOME'], exist_ok=True)

@@ -19,7 +19,7 @@ to `~/.zoicode/.env`. You can also set `RAON_API_KEY` instead.
 Maximize your terminal first: the opening scene needs 116×42. On macOS, iTerm2, Ghostty or WezTerm
 show the colors best.
 
-<p align="center"><img src="docs/session.png" alt="Zoi Code asking before it runs a command, with the cat above the prompt" width="75%"></p>
+<p align="center"><img src="docs/session.png" alt="Zoi Code showing an edit for approval, with the cat above the prompt" width="75%"></p>
 
 ## Use
 
