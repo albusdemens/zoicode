@@ -1,0 +1,66 @@
+{
+  "name": "raoncode",
+  "version": "0.1.0",
+  "description": "Zoi Code: a cozy coding agent for your terminal, powered by Raon",
+  "keywords": [
+    "cli",
+    "terminal",
+    "coding-agent",
+    "ai",
+    "llm",
+    "typescript",
+    "ink",
+    "pixel-art",
+    "raon"
+  ],
+  "homepage": "https://github.com/albusdemens/zoicode#readme",
+  "bugs": {
+    "url": "https://github.com/albusdemens/zoicode/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/albusdemens/zoicode.git"
+  },
+  "license": "MIT",
+  "author": "Alberto Cereser",
+  "type": "module",
+  "bin": {
+    "raoncode": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.tsx",
+    "build": "esbuild src/cli.tsx --bundle --platform=node --format=esm --packages=external --outfile=dist/cli.js --banner:js=\"#!/usr/bin/env node\"",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx test/run.mts && tsx test/agent-core.mts && tsx test/bash.mts && tsx test/files.mts && tsx test/search-web.mts && tsx test/cli-config.mts",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run typecheck"
+  },
+  "dependencies": {
+    "chalk": "^6.0.1",
+    "cli-highlight": "^2.1.11",
+    "commander": "^15.0.0",
+    "diff": "^9.0.0",
+    "fast-glob": "^3.3.3",
+    "ink": "^6.8.0",
+    "marked": "^15.0.12",
+    "marked-terminal": "^7.3.0",
+    "openai": "^7.43.0",
+    "react": "^19.3.1",
+    "wrap-ansi": "^9.0.2"
+  },
+  "devDependencies": {
+    "@types/diff": "^7.0.2",
+    "@types/marked-terminal": "^6.1.1",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

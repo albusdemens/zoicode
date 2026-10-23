@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.tgz
+.env
+__pycache__/
+# Local material that is not part of the published project (reference images, retired experiments).
+archive/
