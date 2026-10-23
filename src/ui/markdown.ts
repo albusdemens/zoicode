@@ -67,14 +67,40 @@ function getMarked(width: number): Marked {
 export function renderMarkdown(text: string, width = process.stdout.columns || 80): string {
   try {
     const out = getMarked(Math.max(40, width - 4)).parse(text, { async: false }) as string;
-    return out.replace(/\n+$/, '');
+    return plainLinks(out).replace(/\n+$/, '');
   } catch {
     return text;
   }
 }
 
+const HYPERLINK = '\x1b]8;;';
+
+/**
+ * marked-terminal turns links into clickable terminal hyperlinks (OSC 8) where the terminal supports
+ * them, and then the text shown can differ from where the link goes. The text is the model's, so
+ * links show their address instead, as on other terminals: "text (address)". One pass, no backtracking.
+ */
+function plainLinks(out: string): string {
+  let res = '';
+  for (let i = 0; ; ) {
+    const open = out.indexOf(HYPERLINK, i);
+    if (open === -1) return res + out.slice(i);
+    res += out.slice(i, open);
+    const urlEnd = out.indexOf('\x07', open + HYPERLINK.length);
+    const close = urlEnd === -1 ? -1 : out.indexOf(HYPERLINK + '\x07', urlEnd + 1);
+    if (close === -1) {
+      i = urlEnd === -1 ? open + HYPERLINK.length : urlEnd + 1; // a broken one: drop just the code
+      continue;
+    }
+    const url = out.slice(open + HYPERLINK.length, urlEnd);
+    const text = out.slice(urlEnd + 1, close);
+    res += text.replace(/\x1b\[[0-9;]*m/g, '') === url ? text : `${text} (${url})`;
+    i = close + HYPERLINK.length + 1;
+  }
+}
+
 /** Colored unified diff: green for additions, red for removals, with line numbers. */
-export function renderDiff(patch: string, maxLines = 40): string {
+export function renderDiff(patch: string, maxLines = 40, clean: (s: string) => string = sanitize): string {
   const out: string[] = [];
   let oldLn = 0;
   let newLn = 0;
@@ -90,7 +116,7 @@ export function renderDiff(patch: string, maxLines = 40): string {
     }
     // Index:/===/---/+++ headers only come before the first hunk; inside one, "---" is a removed "--" line.
     if (!inHunk || raw.startsWith('\\')) continue;
-    const line = sanitize(raw);
+    const line = clean(raw);
     if (line.startsWith('+')) {
       out.push(chalk.bgHex('#1F3A1A').hex('#B8F28C')(`${String(newLn++).padStart(4)} + ${line.slice(1)}`));
     } else if (line.startsWith('-')) {

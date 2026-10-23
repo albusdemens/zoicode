@@ -7,6 +7,7 @@ import type { Tool } from '../tools/index.js';
 import { displayPath, isInsideDir, resolvePath } from '../tools/types.js';
 import { renderDiff, renderMarkdown } from './markdown.js';
 import { sanitize, sanitizeStrict } from './sanitize.js';
+import { gitHooks, riskyGitConfig } from '../tools/git.js';
 import { C } from './theme.js';
 
 /** Lines the prompt chrome takes besides its content: border, title, spacing, question and 3 options. */
@@ -25,7 +26,7 @@ function previewDiff(tool: Tool, input: any, cwd: string, maxLines: number): str
       after = edit.after;
     } else return null;
     const patch = makeDiff(displayPath({ cwd }, abs), before, after);
-    return patch ? renderDiff(patch, maxLines) : `(large change: ${before.split('\n').length} → ${after.split('\n').length} lines)`;
+    return patch ? renderDiff(patch, maxLines, sanitizeStrict) : `(large change: ${before.split('\n').length} → ${after.split('\n').length} lines)`;
   } catch {
     return null;
   }
@@ -77,6 +78,17 @@ export function PermissionPrompt({
   const budget = Math.max(3, maxLines - CHROME_LINES);
   const diff = useMemo(() => previewDiff(tool, input, cwd, Math.max(2, budget - 1)), [tool, input, cwd, budget]);
   const command = sanitizeStrict(String(input.command ?? ''));
+  // A project can come with git hooks or config that run programs on commit, checkout and the like.
+  const gitWarning = useMemo(() => {
+    if (tool.name !== 'Bash' || !/(^|[;&|(]\s*)git(\s|$)/m.test(String(input.command ?? ''))) return '';
+    const hooks = gitHooks(cwd);
+    const config = (riskyGitConfig(cwd) ?? []).filter(k => k !== 'submodules');
+    const parts = [
+      hooks.length ? `its git hooks (${hooks.slice(0, 4).join(', ')}) run too` : '',
+      config.length ? `its git config can run programs (${config.slice(0, 3).join(', ')})` : '',
+    ].filter(Boolean);
+    return parts.length ? sanitizeStrict(`This repository is set up so that ${parts.join(', and ')}.`) : '';
+  }, [tool, input, cwd]);
   // "Don't ask again" is only offered when the agent would store a rule for it, and its label
   // says what that rule covers: Bash(git commit) covers plain `git commit` commands (see bashRule).
   const ruleLabel = (rule: string) => {
@@ -129,8 +141,9 @@ export function PermissionPrompt({
       <Box marginY={1} flexDirection="column" paddingLeft={2}>
         {tool.name === 'Bash' ? (
           <>
-            <Text color={C.parchment}>{clip(command, budget - (input.description ? 1 : 0))}</Text>
+            <Text color={C.parchment}>{clip(command, budget - (input.description ? 1 : 0) - (gitWarning ? 1 : 0))}</Text>
             {input.description ? <Text color={C.dim} wrap="truncate-end">{sanitizeStrict(String(input.description))}</Text> : null}
+            {gitWarning ? <Text color={C.berry}>⚠ {gitWarning}</Text> : null}
           </>
         ) : tool.name === 'WebFetch' ? (
           <Text color={C.sky}>{clip(sanitizeStrict(String(input.url ?? '')), budget)}</Text>

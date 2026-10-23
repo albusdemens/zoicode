@@ -177,7 +177,9 @@ export const WebFetchTool: Tool<{ url: string }> = {
     const raw = buf.toString('utf8');
     const isHtml = /html/.test(type) || /^\s*<(!doctype|html)/i.test(raw);
     const body = isHtml ? htmlToText(raw) : raw;
-    const title = isHtml ? htmlToText(raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '') : '';
+    // A pattern that can't cross a "<", on the part htmlToText reads: the lazy [\s\S]*? this replaces took
+    // minutes on a page of unclosed <title> tags, with the app frozen.
+    const title = isHtml ? htmlToText(raw.slice(0, MAX_HTML).match(/<title\b[^<>]*>([^<]*)<\/title>/i)?.[1] ?? '') : '';
     const header = `URL: ${res.url}\nStatus: ${res.status} ${res.statusText}\n${title ? `Title: ${title}\n` : ''}\n`;
     return {
       output: header + truncate(body, 40_000),

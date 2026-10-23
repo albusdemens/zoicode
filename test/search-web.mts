@@ -253,6 +253,24 @@ test('TodoWrite rejects a malformed list and keeps the previous one', async () =
   assert.deepEqual(ctx.state.todos, [], 'an explicit [] still clears the list');
 });
 
+test('WebFetch reads a page of unclosed <title> tags quickly, and still finds a normal title', async () => {
+  const hostile = '<title>'.repeat(600_000);
+  const server = await serve((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(req.url === '/hostile' ? hostile : '<html><head><title>Docs &amp; more</title></head><body><p>hi</p></body></html>');
+  });
+  try {
+    const start = Date.now();
+    const r = await within(10_000, WebFetchTool.run({ url: server.base + '/hostile' }, tmpCtx()));
+    assert.ok(Date.now() - start < 5000, `took ${Date.now() - start} ms`);
+    assert.ok(!r.isError, r.output.slice(0, 200));
+    const ok = await within(10_000, WebFetchTool.run({ url: server.base + '/ok' }, tmpCtx()));
+    assert.match(ok.output, /Title: Docs & more/);
+  } finally {
+    server.close();
+  }
+});
+
 let failed = 0;
 try {
   for (const [name, fn] of tests) {

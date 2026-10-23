@@ -292,6 +292,37 @@ test('printenv is no longer a command that runs without asking', () => {
   assert.equal(BashTool.isSafe?.({ command: 'ls' }, tmpCtx()), true);
 });
 
+test('a repository that comes with git hooks gets no git rule, and its approval prompt names them', async () => {
+  const { bashRule } = await import('../src/tools/bash.js');
+  const plain = gitRepo();
+  assert.equal(bashRule('git commit -am wip', plain.cwd), 'git commit', 'a fresh repo only has *.sample hooks');
+  const hooked = gitRepo();
+  const hook = path.join(hooked.cwd, '.git', 'hooks', 'pre-commit');
+  fs.writeFileSync(hook, '#!/bin/sh\ntouch pwned\n', { mode: 0o755 });
+  assert.equal(bashRule('git commit -am wip', hooked.cwd), undefined);
+  assert.equal(bashRule('git checkout -b x', hooked.cwd), undefined);
+  const { PermissionPrompt } = await import('../src/ui/Permission.js');
+  const { renderToString } = await import('ink');
+  const React = (await import('react')).default;
+  const out = renderToString(React.createElement(PermissionPrompt, {
+    tool: BashTool, input: { command: 'git commit -am wip' }, cwd: hooked.cwd, rules: [], maxLines: 30, onAnswer: () => {},
+  }), { columns: 120 });
+  assert.match(out, /git hooks \(pre-commit\) run too/);
+});
+
+test('markdown links show where they go, even where the terminal supports hyperlinks', () => {
+  const code = "import { renderMarkdown } from './src/ui/markdown.ts';" +
+    "process.stdout.write(JSON.stringify(renderMarkdown('See [https://docs.example/security](http://evil.example/steal) and [same](same)')));";
+  const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], {
+    cwd: path.resolve(path.dirname(new URL(import.meta.url).pathname), '..'),
+    env: { ...process.env, FORCE_HYPERLINK: '1', FORCE_COLOR: '0' },
+    encoding: 'utf8',
+  });
+  const out = JSON.parse(r.stdout || '""') as string;
+  assert.ok(!out.includes('\x1b]8'), JSON.stringify(out) + r.stderr);
+  assert.match(out, /https:\/\/docs\.example\/security \(http:\/\/evil\.example\/steal\)/);
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try {

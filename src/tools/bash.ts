@@ -5,7 +5,7 @@ import type { Socket } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
-import { QUIET_GIT_ENV, riskyGitConfig } from './git.js';
+import { gitHooks, QUIET_GIT_ENV, riskyGitConfig } from './git.js';
 import { containsSecrets, fixedPrefix, inSecrets } from './secrets.js';
 import type { Tool, ToolContext } from './types.js';
 
@@ -143,7 +143,7 @@ const GIT_RULED = new Set([
 ]);
 /** Options that make one of those run another program, or write where the command doesn't say. */
 const gitUnsafeForRule = (word: string, sub: string) =>
-  longFlag(word, 'upload-pack', 'receive-pack', 'exec', 'output', 'ext-diff', 'open-files-in-pager', 'template', 'config', 'config-env') ||
+  longFlag(word, 'upload-pack', 'receive-pack', 'exec', 'exec-path', 'output', 'ext-diff', 'open-files-in-pager', 'template', 'config', 'config-env') ||
   shortFlag(word, 'c') || (sub === 'grep' && shortFlag(word, 'O')) || (sub === 'rebase' && shortFlag(word, 'x'));
 
 /** `2>&1` and `>/dev/null` change nothing a rule cares about. */
@@ -168,7 +168,7 @@ export function bashRule(command: string, cwd: string): string | undefined {
   if (unsafeArg && words.some((w, i) => i > 0 && unsafeArg(w, words[i - 1]))) return undefined;
   if (program === 'git') {
     if (!GIT_RULED.has(sub) || words.some((w, i) => i > 1 && gitUnsafeForRule(w, sub))) return undefined;
-    if (riskyGitConfig(cwd)?.length !== 0) return undefined;
+    if (riskyGitConfig(cwd)?.length !== 0 || gitHooks(cwd).length) return undefined;
     return `git ${sub}`;
   }
   if (!SUBCOMMAND_TOOLS.has(program) || !sub || !/^[a-z][\w:-]*$/i.test(sub)) return program;

@@ -63,30 +63,58 @@ export function riskyGitConfig(cwd: string): string[] | undefined {
   return [...risky];
 }
 
+/** The repository's git folder: .git itself, or where a .git file (worktree, submodule) points. */
+function realGitDir(gitDir: string): string {
+  if (!fs.statSync(gitDir).isFile()) return gitDir;
+  const target = /^gitdir: (.+)$/m.exec(fs.readFileSync(gitDir, 'utf8'))?.[1].trim();
+  if (!target) throw new Error(`${gitDir} names no git folder`);
+  return path.resolve(path.dirname(gitDir), target);
+}
+
 /** Whether the repository cwd is in has submodules (a .gitmodules file, or modules in its git folder). */
 function hasSubmodules(cwd: string): boolean {
   const gitDir = findGitDir(cwd);
   if (!gitDir) return false;
   if (fs.existsSync(path.join(path.dirname(gitDir), '.gitmodules'))) return true;
   try {
-    const dir = fs.statSync(gitDir).isFile()
-      ? path.resolve(path.dirname(gitDir), /^gitdir: (.+)$/m.exec(fs.readFileSync(gitDir, 'utf8'))?.[1].trim() ?? '.')
-      : gitDir;
-    return fs.existsSync(path.join(dir, 'modules'));
+    return fs.existsSync(path.join(realGitDir(gitDir), 'modules'));
   } catch {
     return true;
+  }
+}
+
+/**
+ * The hooks the repository has: executable files in its hooks folder (the shared one, for a
+ * worktree) other than the *.sample files git creates. They run on commit, checkout, merge, push and
+ * so on, so a project that comes with hooks gets no "don't ask again" rule for git, and the approval
+ * prompt names them. Read commands such as status and diff run none (with GIT_OPTIONAL_LOCKS=0).
+ */
+export function gitHooks(cwd: string): string[] {
+  const gitDir = findGitDir(cwd);
+  if (!gitDir) return [];
+  try {
+    let dir = realGitDir(gitDir);
+    const common = path.join(dir, 'commondir');
+    if (fs.existsSync(common)) dir = path.resolve(dir, fs.readFileSync(common, 'utf8').trim());
+    const hooks = path.join(dir, 'hooks');
+    return fs.readdirSync(hooks).filter(f => {
+      if (f.endsWith('.sample')) return false;
+      try {
+        fs.accessSync(path.join(hooks, f), fs.constants.X_OK);
+        return fs.statSync(path.join(hooks, f)).isFile();
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return [];
   }
 }
 
 /** The branch HEAD points at, read from the files so no git command runs, or undefined. */
 export function currentBranch(gitDir: string): string | undefined {
   try {
-    let dir = gitDir;
-    if (fs.statSync(gitDir).isFile()) {
-      const target = /^gitdir: (.+)$/m.exec(fs.readFileSync(gitDir, 'utf8'))?.[1].trim();
-      if (!target) return undefined;
-      dir = path.resolve(path.dirname(gitDir), target);
-    }
+    const dir = realGitDir(gitDir);
     const head = fs.readFileSync(path.join(dir, 'HEAD'), 'utf8').trim();
     const ref = /^ref: refs\/heads\/(.+)$/.exec(head);
     return ref ? ref[1] : /^[0-9a-f]{7,}$/.test(head) ? `(detached at ${head.slice(0, 7)})` : undefined;

@@ -196,25 +196,46 @@ function riskyGitConfig(cwd) {
   }
   return [...risky];
 }
+function realGitDir(gitDir) {
+  if (!fs2.statSync(gitDir).isFile()) return gitDir;
+  const target = /^gitdir: (.+)$/m.exec(fs2.readFileSync(gitDir, "utf8"))?.[1].trim();
+  if (!target) throw new Error(`${gitDir} names no git folder`);
+  return path2.resolve(path2.dirname(gitDir), target);
+}
 function hasSubmodules(cwd) {
   const gitDir = findGitDir(cwd);
   if (!gitDir) return false;
   if (fs2.existsSync(path2.join(path2.dirname(gitDir), ".gitmodules"))) return true;
   try {
-    const dir = fs2.statSync(gitDir).isFile() ? path2.resolve(path2.dirname(gitDir), /^gitdir: (.+)$/m.exec(fs2.readFileSync(gitDir, "utf8"))?.[1].trim() ?? ".") : gitDir;
-    return fs2.existsSync(path2.join(dir, "modules"));
+    return fs2.existsSync(path2.join(realGitDir(gitDir), "modules"));
   } catch {
     return true;
   }
 }
+function gitHooks(cwd) {
+  const gitDir = findGitDir(cwd);
+  if (!gitDir) return [];
+  try {
+    let dir = realGitDir(gitDir);
+    const common = path2.join(dir, "commondir");
+    if (fs2.existsSync(common)) dir = path2.resolve(dir, fs2.readFileSync(common, "utf8").trim());
+    const hooks = path2.join(dir, "hooks");
+    return fs2.readdirSync(hooks).filter((f) => {
+      if (f.endsWith(".sample")) return false;
+      try {
+        fs2.accessSync(path2.join(hooks, f), fs2.constants.X_OK);
+        return fs2.statSync(path2.join(hooks, f)).isFile();
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return [];
+  }
+}
 function currentBranch(gitDir) {
   try {
-    let dir = gitDir;
-    if (fs2.statSync(gitDir).isFile()) {
-      const target = /^gitdir: (.+)$/m.exec(fs2.readFileSync(gitDir, "utf8"))?.[1].trim();
-      if (!target) return void 0;
-      dir = path2.resolve(path2.dirname(gitDir), target);
-    }
+    const dir = realGitDir(gitDir);
     const head = fs2.readFileSync(path2.join(dir, "HEAD"), "utf8").trim();
     const ref = /^ref: refs\/heads\/(.+)$/.exec(head);
     return ref ? ref[1] : /^[0-9a-f]{7,}$/.test(head) ? `(detached at ${head.slice(0, 7)})` : void 0;
@@ -515,7 +536,7 @@ function bashRule(command, cwd) {
   if (unsafeArg && words.some((w, i) => i > 0 && unsafeArg(w, words[i - 1]))) return void 0;
   if (program2 === "git") {
     if (!GIT_RULED.has(sub) || words.some((w, i) => i > 1 && gitUnsafeForRule(w, sub))) return void 0;
-    if (riskyGitConfig(cwd)?.length !== 0) return void 0;
+    if (riskyGitConfig(cwd)?.length !== 0 || gitHooks(cwd).length) return void 0;
     return `git ${sub}`;
   }
   if (!SUBCOMMAND_TOOLS.has(program2) || !sub || !/^[a-z][\w:-]*$/i.test(sub)) return program2;
@@ -797,7 +818,7 @@ var init_bash = __esm({
       "tag",
       "worktree"
     ]);
-    gitUnsafeForRule = (word, sub) => longFlag(word, "upload-pack", "receive-pack", "exec", "output", "ext-diff", "open-files-in-pager", "template", "config", "config-env") || shortFlag(word, "c") || sub === "grep" && shortFlag(word, "O") || sub === "rebase" && shortFlag(word, "x");
+    gitUnsafeForRule = (word, sub) => longFlag(word, "upload-pack", "receive-pack", "exec", "exec-path", "output", "ext-diff", "open-files-in-pager", "template", "config", "config-env") || shortFlag(word, "c") || sub === "grep" && shortFlag(word, "O") || sub === "rebase" && shortFlag(word, "x");
     HARMLESS_REDIRECTS = /(^|[ \t])(\d?>&\d|&?\d?>[ \t]*\/dev\/null)(?=[ \t]|$)/g;
     BashTool = {
       name: "Bash",
@@ -1681,7 +1702,7 @@ It was not fetched. Call WebFetch again with that URL if you need it.`,
         const raw = buf.toString("utf8");
         const isHtml = /html/.test(type) || /^\s*<(!doctype|html)/i.test(raw);
         const body = isHtml ? htmlToText(raw) : raw;
-        const title = isHtml ? htmlToText(raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "") : "";
+        const title = isHtml ? htmlToText(raw.slice(0, MAX_HTML).match(/<title\b[^<>]*>([^<]*)<\/title>/i)?.[1] ?? "") : "";
         const header = `URL: ${res.url}
 Status: ${res.status} ${res.statusText}
 ${title ? `Title: ${title}
@@ -3622,12 +3643,30 @@ function getMarked(width) {
 function renderMarkdown(text, width = process.stdout.columns || 80) {
   try {
     const out = getMarked(Math.max(40, width - 4)).parse(text, { async: false });
-    return out.replace(/\n+$/, "");
+    return plainLinks(out).replace(/\n+$/, "");
   } catch {
     return text;
   }
 }
-function renderDiff(patch, maxLines = 40) {
+function plainLinks(out) {
+  let res = "";
+  for (let i = 0; ; ) {
+    const open = out.indexOf(HYPERLINK, i);
+    if (open === -1) return res + out.slice(i);
+    res += out.slice(i, open);
+    const urlEnd = out.indexOf("\x07", open + HYPERLINK.length);
+    const close = urlEnd === -1 ? -1 : out.indexOf(HYPERLINK + "\x07", urlEnd + 1);
+    if (close === -1) {
+      i = urlEnd === -1 ? open + HYPERLINK.length : urlEnd + 1;
+      continue;
+    }
+    const url = out.slice(open + HYPERLINK.length, urlEnd);
+    const text = out.slice(urlEnd + 1, close);
+    res += text.replace(/\x1b\[[0-9;]*m/g, "") === url ? text : `${text} (${url})`;
+    i = close + HYPERLINK.length + 1;
+  }
+}
+function renderDiff(patch, maxLines = 40, clean2 = sanitize) {
   const out = [];
   let oldLn = 0;
   let newLn = 0;
@@ -3642,7 +3681,7 @@ function renderDiff(patch, maxLines = 40) {
       continue;
     }
     if (!inHunk || raw.startsWith("\\")) continue;
-    const line = sanitize(raw);
+    const line = clean2(raw);
     if (line.startsWith("+")) {
       out.push(chalk6.bgHex("#1F3A1A").hex("#B8F28C")(`${String(newLn++).padStart(4)} + ${line.slice(1)}`));
     } else if (line.startsWith("-")) {
@@ -3662,13 +3701,14 @@ function bulleted(text, bullet, width) {
   const indent = " ".repeat(stringWidth(bullet));
   return wrapAnsi(text, Math.max(10, width - indent.length), { hard: true, trim: false }).split("\n").map((line, i) => (i === 0 ? bullet : indent) + line.replace(/ +$/, "")).join("\n");
 }
-var cachedWidth, marked;
+var cachedWidth, marked, HYPERLINK;
 var init_markdown = __esm({
   "src/ui/markdown.ts"() {
     "use strict";
     init_sanitize();
     init_theme();
     cachedWidth = 0;
+    HYPERLINK = "\x1B]8;;";
   }
 });
 
@@ -3836,7 +3876,7 @@ function previewDiff(tool, input, cwd, maxLines) {
       after = edit.after;
     } else return null;
     const patch = makeDiff(displayPath({ cwd }, abs), before, after);
-    return patch ? renderDiff(patch, maxLines) : `(large change: ${before.split("\n").length} \u2192 ${after.split("\n").length} lines)`;
+    return patch ? renderDiff(patch, maxLines, sanitizeStrict) : `(large change: ${before.split("\n").length} \u2192 ${after.split("\n").length} lines)`;
   } catch {
     return null;
   }
@@ -3870,6 +3910,16 @@ function PermissionPrompt({
   const budget = Math.max(3, maxLines - CHROME_LINES);
   const diff = useMemo2(() => previewDiff(tool, input, cwd, Math.max(2, budget - 1)), [tool, input, cwd, budget]);
   const command = sanitizeStrict(String(input.command ?? ""));
+  const gitWarning = useMemo2(() => {
+    if (tool.name !== "Bash" || !/(^|[;&|(]\s*)git(\s|$)/m.test(String(input.command ?? ""))) return "";
+    const hooks = gitHooks(cwd);
+    const config = (riskyGitConfig(cwd) ?? []).filter((k) => k !== "submodules");
+    const parts = [
+      hooks.length ? `its git hooks (${hooks.slice(0, 4).join(", ")}) run too` : "",
+      config.length ? `its git config can run programs (${config.slice(0, 3).join(", ")})` : ""
+    ].filter(Boolean);
+    return parts.length ? sanitizeStrict(`This repository is set up so that ${parts.join(", and ")}.`) : "";
+  }, [tool, input, cwd]);
   const ruleLabel = (rule) => {
     const m = rule.match(/^(\w+)\((.*)\)$/);
     if (tool.name === "Bash" && m) return `\`${sanitize(m[2])}\` commands`;
@@ -3901,8 +3951,12 @@ function PermissionPrompt({
       title
     ] }),
     /* @__PURE__ */ jsx3(Box3, { marginY: 1, flexDirection: "column", paddingLeft: 2, children: tool.name === "Bash" ? /* @__PURE__ */ jsxs3(Fragment, { children: [
-      /* @__PURE__ */ jsx3(Text3, { color: C.parchment, children: clip(command, budget - (input.description ? 1 : 0)) }),
-      input.description ? /* @__PURE__ */ jsx3(Text3, { color: C.dim, wrap: "truncate-end", children: sanitizeStrict(String(input.description)) }) : null
+      /* @__PURE__ */ jsx3(Text3, { color: C.parchment, children: clip(command, budget - (input.description ? 1 : 0) - (gitWarning ? 1 : 0)) }),
+      input.description ? /* @__PURE__ */ jsx3(Text3, { color: C.dim, wrap: "truncate-end", children: sanitizeStrict(String(input.description)) }) : null,
+      gitWarning ? /* @__PURE__ */ jsxs3(Text3, { color: C.berry, children: [
+        "\u26A0 ",
+        gitWarning
+      ] }) : null
     ] }) : tool.name === "WebFetch" ? /* @__PURE__ */ jsx3(Text3, { color: C.sky, children: clip(sanitizeStrict(String(input.url ?? "")), budget) }) : /* @__PURE__ */ jsxs3(Fragment, { children: [
       /* @__PURE__ */ jsxs3(Text3, { color: C.parchment, wrap: "truncate-end", children: [
         file,
@@ -3960,6 +4014,7 @@ var init_Permission = __esm({
     init_types();
     init_markdown();
     init_sanitize();
+    init_git();
     init_theme();
     CHROME_LINES = 9;
   }
