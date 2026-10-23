@@ -2,6 +2,8 @@ import path from 'node:path';
 import { LLM, type ChatMessage, type StreamEvent, type ToolCall, type Usage } from './llm.js';
 import { buildSystemPrompt, loadMemory } from './prompt.js';
 import { ALL_TOOLS, ExitPlanModeTool, findTool, toolSpecs, type Tool, type ToolContext, type ToolResult } from './tools/index.js';
+import { bashRule, shellCwd } from './tools/bash.js';
+import { fixedPrefix, inSecrets } from './tools/secrets.js';
 import { isInsideDir, resolvePath, truncate } from './tools/types.js';
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'bypass';
@@ -36,13 +38,6 @@ const PLAN_TOOLS = new Set(['Bash', 'WebFetch']);
 /** The most one tool result (about 25k tokens) or one user message with its attachments adds to the history. */
 const MAX_RESULT_CHARS = 100_000;
 const MAX_PROMPT_CHARS = 200_000;
-
-/** Programs that run their arguments as a command: a rule for one of them would allow anything. */
-const WRAPPERS = new Set([
-  'env', 'sudo', 'doas', 'su', 'runuser', 'pkexec', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'busybox', 'eval', 'exec',
-  'command', 'builtin', 'source', '.', 'trap', 'enable', 'coproc', 'time', 'xargs', 'parallel', 'timeout', 'nohup', 'nice',
-  'ionice', 'stdbuf', 'setsid', 'flock', 'watch', 'chroot', 'unshare', 'nsenter', 'strace', 'script', 'ssh',
-]);
 
 const PLAN_REMINDER =
   'Plan mode is active. Do not make any changes yet: no file edits or writes, and no commands that change ' +
@@ -127,12 +122,13 @@ export class Agent {
 
   /**
    * The rules an "always" answer stores for this call; empty when it can only be allowed once. A Bash
-   * rule names the program, and only ever approves a simple command of it (see isSimpleCommand).
+   * rule names the program (and the subcommand, for tools like git and npm), and only ever covers one
+   * plain command of it that runs no other program (see bashRule).
    */
   alwaysRules(tool: Tool, input: any): string[] {
     if (tool.name === 'Bash') {
-      const program = ruleProgram(String(input?.command ?? ''));
-      return program ? [`Bash(${program})`] : [];
+      const rule = bashRule(String(input?.command ?? ''), shellCwd(this.ctx));
+      return rule ? [`Bash(${rule})`] : [];
     }
     if (tool.name === 'WebFetch') {
       try {
@@ -144,17 +140,41 @@ export class Agent {
     return [tool.name];
   }
 
-  /** Whether a Write/Edit target lies inside the project once symlinks are followed. */
+  /**
+   * Whether a Write/Edit target lies inside the project once symlinks are followed, and outside the
+   * folders whose files make programs run later: .git (hooks, config) and the custom commands in
+   * .zoicode and .claude. Auto-accepted edits and Edit/Write rules only cover such a target.
+   */
   private inProject(file: unknown): boolean {
-    return typeof file === 'string' && isInsideDir(this.cwd, resolvePath(this.ctx, file));
+    if (typeof file !== 'string') return false;
+    const abs = resolvePath(this.ctx, file);
+    return isInsideDir(this.cwd, abs) && !['.git', '.zoicode', '.claude'].some(d => isInsideDir(path.join(this.cwd, d), abs)) &&
+      !abs.split(path.sep).includes('.git');
+  }
+
+  /**
+   * Whether Read, LS, Glob or Grep would read inside a credential folder (see secrets.ts). Searches
+   * skip the ones under the folder they search, so only a path or pattern inside one counts.
+   */
+  private readsSecrets(tool: Tool, input: any): boolean {
+    if (!['Read', 'LS', 'Glob', 'Grep'].includes(tool.name)) return false;
+    const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
+    if (tool.name === 'Read') return !!str(input?.file_path) && inSecrets(resolvePath(this.ctx, input.file_path));
+    const base = resolvePath(this.ctx, str(input?.path) ?? '.');
+    // Glob's pattern and Grep's glob are paths with wildcards, which can climb out of `path` (../..).
+    const pattern = tool.name === 'Glob' ? str(input?.pattern) : tool.name === 'Grep' ? str(input?.glob) : undefined;
+    return inSecrets(base) || (!!pattern && inSecrets(path.resolve(base, fixedPrefix(pattern))));
   }
 
   private async permitted(tool: Tool, input: any): Promise<boolean> {
-    if (tool.readOnly || this.permissionMode === 'bypass') return true;
+    if (this.permissionMode === 'bypass') return true;
+    // Reading never asks, except in credential folders: then once, with no rule to remember.
+    const secret = this.readsSecrets(tool, input);
+    if (tool.readOnly && !secret) return true;
     // Auto-accepted edits stay inside the project: a write anywhere else is asked about.
     if (this.permissionMode === 'acceptEdits' && EDIT_TOOLS.has(tool.name) && this.inProject(input.file_path)) return true;
     if (tool.isSafe?.(input, this.ctx)) return true;
-    const rules = this.alwaysRules(tool, input);
+    const rules = secret ? [] : this.alwaysRules(tool, input);
     // A rule never covers a compound Bash command, nor a Write/Edit outside the project.
     const coverable = tool.name === 'Bash' ? isSimpleCommand(String(input.command)) : !EDIT_TOOLS.has(tool.name) || this.inProject(input.file_path);
     if (coverable && rules.length && rules.every(r => this.allowRules.has(r))) return true;
@@ -413,12 +433,6 @@ export class Agent {
     this.ctx.readFiles.clear();
     return summary;
   }
-}
-
-/** The program a command starts with, when a rule may name it: a plain word, and not a wrapper like env or xargs. */
-function ruleProgram(command: string): string | undefined {
-  const program = command.trim().split(/[ \t]+/)[0];
-  return /^[\w@./+-][\w@./+:-]*$/.test(program) && !WRAPPERS.has(path.basename(program)) ? program : undefined;
 }
 
 /**

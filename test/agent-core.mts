@@ -4,6 +4,7 @@
  * the LLM class itself is tested against a local SSE server.
  */
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -211,20 +212,108 @@ test('"always" stores the rule the prompt was given, and never one for a wrapper
   const agent = new Agent({ llm: fakeLLM([]).llm, cwd: tmpDir() });
   const bash = findTool('Bash')!;
   const rules = (command: string) => agent.alwaysRules(bash, { command });
-  assert.deepEqual(rules('npm test'), ['Bash(npm)']);
-  assert.deepEqual(rules('  cd sub && npm test'), ['Bash(cd)']);
-  for (const c of ['env rm -rf x', 'sudo rm x', 'timeout 5 rm x', 'xargs rm', 'bash -c "rm x"', '/usr/bin/env rm x', 'nohup rm x', 'time rm x', 'FOO=1 npm test', '"npm" test', '$CMD x', '']) {
+  assert.deepEqual(rules('npm test'), ['Bash(npm test)']);
+  assert.deepEqual(rules('npm -v'), ['Bash(npm)']);
+  assert.deepEqual(rules('make test 2>&1'), ['Bash(make test)']);
+  assert.deepEqual(rules('rm -rf build'), ['Bash(rm)']);
+  for (const c of ['env rm -rf x', 'sudo rm x', 'timeout 5 rm x', 'xargs rm', 'bash -c "rm x"', '/usr/bin/env rm x', 'nohup rm x', 'time rm x', 'FOO=1 npm test', '$CMD x', '', '  cd sub && npm test', 'rm *.tmp', './build.sh']) {
     assert.deepEqual(rules(c), [], c);
   }
   const given: string[][] = [];
   const answers: PermissionAnswer[] = ['always', 'always'];
   agent.canUseTool = async (_tool, _input, r) => (given.push(r), answers.shift() ?? 'deny');
-  agent.llm = fakeLLM([{ calls: [['Bash', { command: 'raon-test-tool status && true' }]] }]).llm;
+  agent.llm = fakeLLM([{ calls: [['Bash', { command: 'raon-test-tool status' }]] }]).llm;
   await turn(agent, 'go');
   agent.llm = fakeLLM([{ calls: [['Bash', { command: 'env FOO=1 raon-test-tool' }]] }]).llm;
   await turn(agent, 'go');
   assert.deepEqual(given, [['Bash(raon-test-tool)'], []]);
   assert.deepEqual([...agent.allowRules], ['Bash(raon-test-tool)']);
+});
+
+test('a rule never covers a command that runs other programs or writes elsewhere, and none is offered for one', async () => {
+  const cwd = tmpDir();
+  spawnSync('git', ['init', '-q'], { cwd });
+  const agent = new Agent({ llm: fakeLLM([]).llm, cwd });
+  const bash = findTool('Bash')!;
+  const rules = (command: string) => agent.alwaysRules(bash, { command });
+  assert.deepEqual(rules('git add -A'), ['Bash(git add)']);
+  assert.deepEqual(rules('git push -u origin main'), ['Bash(git push)']);
+  for (const c of [
+    "git -c alias.x='!touch pwned' x", 'git x', 'git config core.fsmonitor "touch pwned"', 'git -C .. add x', 'git push --receive-pack="touch pwned"',
+    'git rebase -x "touch pwned" HEAD~1', 'git diff --output=pwned', 'git grep -O"touch pwned" x', 'git init --template=evil',
+    "awk 'BEGIN{system(\"touch pwned\")}'", "sed -i s/a/b/ f", 'find . -delete', 'sort -o pwned f', 'python3 -c "1"', 'npx evil', 'npm exec evil',
+    'node evil.js', 'tar -xf a.tar --to-command="touch pwned"',
+  ]) {
+    assert.deepEqual(rules(c), [], c);
+  }
+  const prompted: string[] = [];
+  agent.canUseTool = async (_tool, input) => (prompted.push(input.command), 'deny');
+  for (const r of ['Bash(git add)', 'Bash(git)', 'Bash(find)', 'Bash(sort)', 'Bash(awk)', 'Bash(sed)']) agent.allowRules.add(r);
+  const auto = ['git add -A', 'find . -name x', 'sort f'];
+  const asked = ["git -c alias.x='!touch pwned' x", 'find . -name pwned -delete', 'sort -o pwned f', "awk 'BEGIN{print 1}'", 'sed s/a/b/ f', 'git -c core.pager=x add -A'];
+  fs.writeFileSync(path.join(cwd, 'f'), 'b\na\n');
+  for (const command of [...auto, ...asked]) {
+    agent.llm = fakeLLM([{ calls: [['Bash', { command }]] }]).llm;
+    await turn(agent, 'run it');
+  }
+  assert.deepEqual(prompted, asked);
+  assert.equal(fs.existsSync(path.join(cwd, 'pwned')), false);
+  // A git rule doesn't apply in a repository whose own config can run programs.
+  fs.appendFileSync(path.join(cwd, '.git', 'config'), '[core]\n\tfsmonitor = "touch pwned"\n');
+  assert.deepEqual(rules('git add -A'), []);
+  prompted.length = 0;
+  agent.llm = fakeLLM([{ calls: [['Bash', { command: 'git add -A' }]] }]).llm;
+  await turn(agent, 'run it');
+  assert.deepEqual(prompted, ['git add -A']);
+  assert.equal(fs.existsSync(path.join(cwd, 'pwned')), false);
+});
+
+test('reading a credential folder asks, with no rule offered; searching skips them; ls of home does not ask', async () => {
+  const root = tmpDir();
+  const home = path.join(root, 'home');
+  const cwd = path.join(home, 'project');
+  fs.mkdirSync(path.join(home, '.ssh'), { recursive: true });
+  fs.mkdirSync(cwd);
+  fs.writeFileSync(path.join(home, '.ssh', 'id_rsa'), 'SECRET-KEY\n');
+  fs.writeFileSync(path.join(cwd, 'README.md'), 'hello\n');
+  const savedHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const asked: [string, unknown, string[]][] = [];
+    const agent = new Agent({ llm: fakeLLM([]).llm, cwd, canUseTool: async (tool, input, rules) => (asked.push([tool.name, input.file_path ?? input.path ?? input.command, rules]), 'deny') });
+    const calls: [string, Record<string, unknown>][] = [
+      ['Read', { file_path: '~/.ssh/id_rsa' }], ['LS', { path: '~/.ssh' }], ['Glob', { pattern: path.join(home, '.ssh', '*') }],
+      ['Grep', { pattern: 'SECRET', path: '~' }], ['Read', { file_path: 'README.md' }],
+      ['Bash', { command: 'cat ~/.ssh/id_rsa' }], ['Bash', { command: 'grep -r SECRET ~' }], ['Bash', { command: 'printenv' }],
+      ['Bash', { command: 'cat ../.s*h/id_rsa' }], ['Bash', { command: 'ls ~' }], ['Bash', { command: 'cat README.md' }],
+    ];
+    const outputs: string[] = [];
+    for (const [name, input] of calls) {
+      agent.llm = fakeLLM([{ calls: [[name, input]] }]).llm;
+      outputs.push(...toolEnds(await turn(agent, 'go')).map(e => e.result.output));
+    }
+    assert.deepEqual(asked, [
+      ['Read', '~/.ssh/id_rsa', []], ['LS', '~/.ssh', []], ['Glob', undefined, []],
+      ['Bash', 'cat ~/.ssh/id_rsa', ['Bash(cat)']], ['Bash', 'grep -r SECRET ~', ['Bash(grep)']], ['Bash', 'printenv', ['Bash(printenv)']],
+      ['Bash', 'cat ../.s*h/id_rsa', []],
+    ]);
+    assert.ok(outputs.every(o => !o.includes('SECRET-KEY')), 'no tool output carries the key');
+  } finally {
+    process.env.HOME = savedHome;
+  }
+});
+
+test('auto-accepted edits and Write rules never cover .git, .zoicode or .claude inside the project', async () => {
+  const cwd = tmpDir();
+  const prompted: string[] = [];
+  for (const file_path of ['.git/hooks/pre-commit', '.zoicode/commands/x.md', '.claude/commands/y.md', 'sub/.git/config', 'src/ok.ts']) {
+    const { llm } = fakeLLM([{ calls: [['Write', { file_path, content: 'x\n' }]] }]);
+    const agent = new Agent({ llm, cwd, permissionMode: 'acceptEdits', canUseTool: async (_t, input) => (prompted.push(input.file_path), 'deny') });
+    agent.allowRules.add('Write');
+    await turn(agent, 'write it');
+  }
+  assert.deepEqual(prompted, ['.git/hooks/pre-commit', '.zoicode/commands/x.md', '.claude/commands/y.md', 'sub/.git/config']);
+  assert.ok(fs.existsSync(path.join(cwd, 'src/ok.ts')));
 });
 
 test('acceptEdits auto-approves Write/Edit inside the project only, following symlinks', async () => {

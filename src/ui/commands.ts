@@ -153,7 +153,7 @@ export const COMMANDS: Command[] = [
       api.info(
         `🔐 Permission mode: ${api.agent.permissionMode}\n` +
           `Always allowed this session: ${rules.length ? rules.join(', ') : '(none)'}\n` +
-          'Read-only tools and safe commands (ls, cat, git status…) never ask.',
+          'Read-only tools and safe commands (ls, cat, git status…) never ask, except in credential folders like ~/.ssh.',
         C.parchment,
       );
     },

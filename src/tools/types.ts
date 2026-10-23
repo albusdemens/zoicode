@@ -54,7 +54,7 @@ export function displayPath(ctx: Pick<ToolContext, 'cwd'>, abs: string): string 
 }
 
 /** Where a write to abs really lands: every symlink is followed, including a dangling one, which a write would create. */
-function realTarget(abs: string): string {
+export function realTarget(abs: string): string {
   abs = path.resolve(abs);
   const parts = abs.split(path.sep).filter(Boolean);
   let real = path.parse(abs).root;

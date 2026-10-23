@@ -6,13 +6,14 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
 import { QUIET_GIT_ENV, riskyGitConfig } from './git.js';
+import { containsSecrets, fixedPrefix, inSecrets } from './secrets.js';
 import type { Tool, ToolContext } from './types.js';
 
 // Programs that only read. Anything that can write files or run other programs
 // (env, xargs, tree -o, uniq OUT, ...) is deliberately left out.
 const SAFE_COMMANDS = new Set([
   'ls', 'pwd', 'cat', 'head', 'tail', 'wc', 'echo', 'which', 'file', 'stat', 'du', 'df',
-  'grep', 'rg', 'find', 'date', 'whoami', 'uname', 'printenv', 'sort', 'diff',
+  'grep', 'rg', 'find', 'date', 'whoami', 'uname', 'sort', 'diff',
 ]);
 const SAFE_GIT = new Set(['status', 'diff', 'log', 'show', 'rev-parse', 'blame']);
 
@@ -112,13 +113,93 @@ export function isSafeCommand(command: string): boolean {
   });
 }
 
+/**
+ * Programs that run code given in their arguments (or are interpreters, or run whatever package they
+ * are given), so a "don't ask again" rule for one would allow anything. They are asked about each time.
+ */
+const NEVER_RULED = new Set([
+  'env', 'sudo', 'doas', 'su', 'runuser', 'pkexec', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'busybox', 'eval', 'exec',
+  'command', 'builtin', 'source', '.', 'trap', 'enable', 'coproc', 'time', 'xargs', 'parallel', 'timeout', 'nohup', 'nice',
+  'ionice', 'stdbuf', 'setsid', 'flock', 'watch', 'chroot', 'unshare', 'nsenter', 'strace', 'script', 'ssh',
+  'awk', 'gawk', 'nawk', 'mawk', 'sed', 'perl', 'python', 'python2', 'python3', 'node', 'nodejs', 'ruby', 'php', 'lua',
+  'luajit', 'tclsh', 'wish', 'expect', 'Rscript', 'osascript', 'pwsh', 'vi', 'vim', 'nvim', 'ex', 'ed', 'emacs', 'less',
+  'more', 'man', 'tar', 'rsync', 'scp', 'open', 'xdg-open', 'npx', 'pnpx', 'bunx', 'uvx', 'pipx',
+]);
+/** Tools whose rules name the subcommand too: `npm test` and `npm exec` are very different things. */
+const SUBCOMMAND_TOOLS = new Set([
+  'git', 'npm', 'pnpm', 'yarn', 'bun', 'deno', 'cargo', 'go', 'docker', 'kubectl', 'gh', 'pip', 'pip3', 'uv', 'poetry',
+  'make', 'just', 'dotnet', 'mvn', 'gradle', 'brew',
+]);
+/** Subcommands that run arbitrary code or packages: no rule covers them. */
+const NEVER_RULED_SUB: Record<string, string[]> = {
+  npm: ['exec', 'x', 'explore'], pnpm: ['exec', 'dlx'], yarn: ['exec', 'dlx'], bun: ['x'], deno: ['eval'],
+  uv: ['run', 'tool'], poetry: ['run'], gh: ['extension', 'alias'],
+};
+/** Built-in git commands a rule may cover. Aliases are not built in, and config, submodule or bisect can run programs. */
+const GIT_RULED = new Set([
+  'add', 'am', 'apply', 'blame', 'branch', 'checkout', 'cherry-pick', 'clean', 'commit', 'describe', 'diff', 'fetch',
+  'format-patch', 'grep', 'init', 'log', 'ls-files', 'merge', 'mv', 'notes', 'pull', 'push', 'rebase', 'reflog', 'remote',
+  'reset', 'restore', 'revert', 'rev-parse', 'rm', 'shortlog', 'show', 'stash', 'status', 'switch', 'tag', 'worktree',
+]);
+/** Options that make one of those run another program, or write where the command doesn't say. */
+const gitUnsafeForRule = (word: string, sub: string) =>
+  longFlag(word, 'upload-pack', 'receive-pack', 'exec', 'output', 'ext-diff', 'open-files-in-pager', 'template', 'config', 'config-env') ||
+  shortFlag(word, 'c') || (sub === 'grep' && shortFlag(word, 'O')) || (sub === 'rebase' && shortFlag(word, 'x'));
+
+/** `2>&1` and `>/dev/null` change nothing a rule cares about. */
+const HARMLESS_REDIRECTS = /(^|[ \t])(\d?>&\d|&?\d?>[ \t]*\/dev\/null)(?=[ \t]|$)/g;
+
+/**
+ * The rule a "don't ask again" answer stores for this command, which also decides which later commands
+ * it covers: `git commit` for git and other tools with subcommands, the program name otherwise. Undefined
+ * when no rule may cover it, and then the prompt doesn't offer one: anything but one plain command
+ * (chains, pipes, wildcards, variables, substitutions), a program given by path, a program in
+ * NEVER_RULED, or arguments that make it run other programs or write elsewhere (the same checks the
+ * safe path uses, see UNSAFE_ARGS, plus git's own). A git rule also needs a plain repository config.
+ */
+export function bashRule(command: string, cwd: string): string | undefined {
+  if (typeof command !== 'string') return undefined;
+  const commands = splitCommand(command.replace(HARMLESS_REDIRECTS, '$1'));
+  if (commands?.length !== 1 || commands[0].globbed) return undefined;
+  const words = commands[0].words;
+  const [program, sub] = words;
+  if (!/^[\w@+-][\w@.+-]*$/.test(program) || NEVER_RULED.has(program)) return undefined;
+  const unsafeArg = UNSAFE_ARGS.get(program);
+  if (unsafeArg && words.some((w, i) => i > 0 && unsafeArg(w, words[i - 1]))) return undefined;
+  if (program === 'git') {
+    if (!GIT_RULED.has(sub) || words.some((w, i) => i > 1 && gitUnsafeForRule(w, sub))) return undefined;
+    if (riskyGitConfig(cwd)?.length !== 0) return undefined;
+    return `git ${sub}`;
+  }
+  if (!SUBCOMMAND_TOOLS.has(program) || !sub || !/^[a-z][\w:-]*$/i.test(sub)) return program;
+  return NEVER_RULED_SUB[program]?.includes(sub) ? undefined : `${program} ${sub}`;
+}
+
+/**
+ * Whether a command's arguments reach a credential folder (see secrets.ts): then it asks first. Reading
+ * programs can recurse (grep -r, find, du), so a folder that contains one counts too; ls and stat only
+ * show names, so for them only a path inside one does.
+ */
+function argsTouchSecrets(command: string, cwd: string): boolean {
+  return !!splitCommand(command)?.some(({ words }) =>
+    words.slice(1).some(word => {
+      const value = word.includes('=') ? word.slice(word.indexOf('=') + 1) : word; // --file=PATH
+      return [word, value].some(w => {
+        if (/^~[^/]/.test(w)) return true; // another user's home
+        const abs = path.resolve(cwd, fixedPrefix(w.replace(/^~(?=\/|$)/, os.homedir())));
+        return inSecrets(abs) || (!['ls', 'stat'].includes(words[0]) && containsSecrets(abs));
+      });
+    }),
+  );
+}
+
 /** Whether any of the simple commands runs git (they are only "safe" in a repository with a plain config, see git.ts). */
 function runsGit(command: string): boolean {
   return !!splitCommand(command)?.some(({ words }) => words[0] === 'git');
 }
 
 /** Where the shell is: commands run where the last `cd` left it. */
-function shellCwd(ctx: ToolContext): string {
+export function shellCwd(ctx: ToolContext): string {
   return (ctx.state.bashCwd as string | undefined) ?? ctx.cwd;
 }
 
@@ -145,7 +226,10 @@ export const BashTool: Tool<{ command: string; timeout?: number; description?: s
   },
   readOnly: false,
   label: i => (typeof i?.command === 'string' ? i.command : ''),
-  isSafe: (i, ctx) => isSafeCommand(i?.command) && (!runsGit(i.command) || riskyGitConfig(shellCwd(ctx))?.length === 0),
+  isSafe: (i, ctx) =>
+    isSafeCommand(i?.command) &&
+    (!runsGit(i.command) || riskyGitConfig(shellCwd(ctx))?.length === 0) &&
+    !argsTouchSecrets(i.command, shellCwd(ctx)),
   run(input, ctx) {
     const command = input?.command;
     if (typeof command !== 'string' || !command.trim()) {

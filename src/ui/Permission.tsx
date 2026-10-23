@@ -78,10 +78,10 @@ export function PermissionPrompt({
   const diff = useMemo(() => previewDiff(tool, input, cwd, Math.max(2, budget - 1)), [tool, input, cwd, budget]);
   const command = sanitize(String(input.command ?? ''));
   // "Don't ask again" is only offered when the agent would store a rule for it, and its label
-  // says exactly what that rule covers (e.g. Bash(npm) only covers simple npm commands).
+  // says what that rule covers: Bash(git commit) covers plain `git commit` commands (see bashRule).
   const ruleLabel = (rule: string) => {
     const m = rule.match(/^(\w+)\((.*)\)$/);
-    if (tool.name === 'Bash' && m) return `simple \`${sanitize(m[2])}\` commands`;
+    if (tool.name === 'Bash' && m) return `\`${sanitize(m[2])}\` commands`;
     if (tool.name === 'WebFetch' && m) return sanitize(m[2]);
     return `${tool.name} in this project`;
   };
@@ -112,8 +112,12 @@ export function PermissionPrompt({
           ? 'Edit file'
           : tool.name === 'WebFetch'
             ? 'Fetch from the web'
-            : tool.name;
-  const abs = input.file_path ? resolvePath({ cwd }, String(input.file_path)) : '';
+            : tool.readOnly
+              ? `${tool.name} in a credential folder`
+              : tool.name;
+  // Read and Edit name a file; LS, Glob and Grep a folder (when they ask, it is a credential folder).
+  const target = input.file_path ?? input.path;
+  const abs = target ? resolvePath({ cwd }, String(target)) : '';
   const file = abs ? sanitize(displayPath({ cwd }, abs)) : '';
   const outside = abs && !isInsideDir(cwd, abs);
 
@@ -136,6 +140,11 @@ export function PermissionPrompt({
               {file}
               {outside ? <Text color={C.berry}> (outside the project)</Text> : null}
             </Text>
+            {tool.name === 'Glob' || tool.name === 'Grep' ? (
+              <Text color={C.dim} wrap="truncate-end">
+                {sanitize(String(input.glob ?? input.pattern ?? ''))}
+              </Text>
+            ) : null}
             {diff ? <Text>{diff}</Text> : null}
           </>
         )}

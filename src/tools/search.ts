@@ -4,6 +4,7 @@ import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { Worker } from 'node:worker_threads';
 import { glob, type FileSystemAdapter } from 'tinyglobby';
+import { inSecrets, secretMatcher } from './secrets.js';
 import { type Tool, resolvePath, truncate } from './types.js';
 
 const IGNORE = ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**', '**/.next/**', '**/__pycache__/**'];
@@ -34,12 +35,26 @@ function loopGuard(): FileSystemAdapter {
   function realpath(link: string, cb: (err: NodeJS.ErrnoException | null, resolved: string) => void) {
     fsCb.realpath(link, (err, resolved) => {
       if (err) return cb(err, resolved);
+      // A link into a credential folder is skipped like the folder itself (see readdir below).
+      if (inSecrets(resolved)) return cb(Object.assign(new Error(`link into a credential folder at ${link}`), { code: 'EACCES' }), resolved);
       loops(link, resolved).then(loop =>
         cb(loop ? Object.assign(new Error(`symlink loop at ${link}`), { code: 'ELOOP' }) : null, resolved),
       );
     });
   }
-  return { realpath: realpath as FileSystemAdapter['realpath'] };
+  // Credential folders (see secrets.ts) are never listed, and credential files are left out of listings,
+  // wherever the walk goes (a pattern can climb out of the folder searched with ../).
+  const secret = secretMatcher();
+  function readdir(dir: string, opts: unknown, cb?: (err: NodeJS.ErrnoException | null, entries?: unknown[]) => void) {
+    const done = (typeof opts === 'function' ? opts : cb)!;
+    const clean = dir.replace(/\/+$/, '') || '/';
+    if (secret(clean)) return done(null, []);
+    const filter = (err: NodeJS.ErrnoException | null, entries?: (string | fsCb.Dirent)[]) =>
+      done(err, entries?.filter(e => !secret(path.join(clean, typeof e === 'string' ? e : e.name))));
+    if (typeof opts === 'function') fsCb.readdir(dir, filter as never);
+    else fsCb.readdir(dir, opts as { withFileTypes: true }, filter as never);
+  }
+  return { realpath: realpath as FileSystemAdapter['realpath'], readdir: readdir as FileSystemAdapter['readdir'] };
 }
 
 /** Files under cwd matching pattern, as absolute paths. Stops early (with what it found) when interrupted. */

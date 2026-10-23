@@ -299,12 +299,118 @@ var init_prompt = __esm({
   }
 });
 
-// src/tools/bash.ts
-import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+// src/tools/types.ts
 import fs4 from "node:fs";
 import os3 from "node:os";
 import path4 from "node:path";
+function resolvePath(ctx, p) {
+  if (!p) return ctx.cwd;
+  if (p === "~" || p.startsWith("~/")) p = path4.join(os3.homedir(), p.slice(1));
+  return path4.resolve(ctx.cwd, p);
+}
+function displayPath(ctx, abs) {
+  const rel = path4.relative(ctx.cwd, abs);
+  return rel && !rel.startsWith("..") ? rel : abs;
+}
+function realTarget(abs) {
+  abs = path4.resolve(abs);
+  const parts = abs.split(path4.sep).filter(Boolean);
+  let real = path4.parse(abs).root;
+  for (let links = 0; parts.length; ) {
+    const next = path4.join(real, parts.shift());
+    let link;
+    try {
+      link = fs4.readlinkSync(next);
+    } catch {
+      real = next;
+      continue;
+    }
+    if (++links > 40) return next;
+    parts.unshift(...link.split(path4.sep).filter(Boolean));
+    if (path4.isAbsolute(link)) real = path4.parse(link).root;
+  }
+  return real;
+}
+function isInsideDir(dir, abs) {
+  const rel = path4.relative(realTarget(dir), realTarget(abs));
+  return rel === "" || rel !== ".." && !rel.startsWith(".." + path4.sep) && !path4.isAbsolute(rel);
+}
+function truncate(s, max = 3e4) {
+  if (s.length <= max) return s;
+  const half = Math.floor(max / 2);
+  return `${s.slice(0, half)}
+
+... [${s.length - max} characters truncated] ...
+
+${s.slice(-half)}`;
+}
+var init_types = __esm({
+  "src/tools/types.ts"() {
+    "use strict";
+  }
+});
+
+// src/tools/secrets.ts
+import os4 from "node:os";
+import path5 from "node:path";
+function secretPaths() {
+  const home = os4.homedir();
+  return SECRET_PATHS.map((p) => realTarget(path5.join(home, p)));
+}
+function within(dir, p) {
+  const rel = path5.relative(dir, p);
+  return rel === "" || rel !== ".." && !rel.startsWith(".." + path5.sep) && !path5.isAbsolute(rel);
+}
+function inSecrets(abs) {
+  const target = realTarget(abs);
+  return secretPaths().some((secret) => within(secret, target));
+}
+function containsSecrets(abs) {
+  const target = realTarget(abs);
+  return secretPaths().some((secret) => within(target, secret) && secret !== target);
+}
+function secretMatcher() {
+  const secrets = secretPaths();
+  return (abs) => secrets.some((secret) => within(secret, abs));
+}
+function fixedPrefix(pattern) {
+  const parts = pattern.split("/");
+  const i = parts.findIndex((p) => /[*?[{]/.test(p));
+  return i === -1 ? pattern : parts.slice(0, i).join("/") || (pattern.startsWith("/") ? "/" : ".");
+}
+var SECRET_PATHS;
+var init_secrets = __esm({
+  "src/tools/secrets.ts"() {
+    "use strict";
+    init_types();
+    SECRET_PATHS = [
+      ".zoicode",
+      ".ssh",
+      ".aws",
+      ".azure",
+      ".gnupg",
+      ".password-store",
+      ".kube",
+      ".docker/config.json",
+      ".config/gh",
+      ".config/gcloud",
+      ".netrc",
+      ".npmrc",
+      ".pypirc",
+      ".git-credentials",
+      ".cargo/credentials",
+      ".cargo/credentials.toml",
+      ".gem/credentials"
+    ];
+  }
+});
+
+// src/tools/bash.ts
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import fs5 from "node:fs";
+import os5 from "node:os";
+import path6 from "node:path";
 function splitCommand(command) {
   const commands = [];
   let words = [];
@@ -358,6 +464,35 @@ function isSafeCommand(command) {
     return SAFE_COMMANDS.has(cmd);
   });
 }
+function bashRule(command, cwd) {
+  if (typeof command !== "string") return void 0;
+  const commands = splitCommand(command.replace(HARMLESS_REDIRECTS, "$1"));
+  if (commands?.length !== 1 || commands[0].globbed) return void 0;
+  const words = commands[0].words;
+  const [program2, sub] = words;
+  if (!/^[\w@+-][\w@.+-]*$/.test(program2) || NEVER_RULED.has(program2)) return void 0;
+  const unsafeArg = UNSAFE_ARGS.get(program2);
+  if (unsafeArg && words.some((w, i) => i > 0 && unsafeArg(w, words[i - 1]))) return void 0;
+  if (program2 === "git") {
+    if (!GIT_RULED.has(sub) || words.some((w, i) => i > 1 && gitUnsafeForRule(w, sub))) return void 0;
+    if (riskyGitConfig(cwd)?.length !== 0) return void 0;
+    return `git ${sub}`;
+  }
+  if (!SUBCOMMAND_TOOLS.has(program2) || !sub || !/^[a-z][\w:-]*$/i.test(sub)) return program2;
+  return NEVER_RULED_SUB[program2]?.includes(sub) ? void 0 : `${program2} ${sub}`;
+}
+function argsTouchSecrets(command, cwd) {
+  return !!splitCommand(command)?.some(
+    ({ words }) => words.slice(1).some((word) => {
+      const value = word.includes("=") ? word.slice(word.indexOf("=") + 1) : word;
+      return [word, value].some((w) => {
+        if (/^~[^/]/.test(w)) return true;
+        const abs = path6.resolve(cwd, fixedPrefix(w.replace(/^~(?=\/|$)/, os5.homedir())));
+        return inSecrets(abs) || !["ls", "stat"].includes(words[0]) && containsSecrets(abs);
+      });
+    })
+  );
+}
 function runsGit(command) {
   return !!splitCommand(command)?.some(({ words }) => words[0] === "git");
 }
@@ -380,14 +515,14 @@ function killTree(pid, outputs) {
   }
   let pids = [];
   try {
-    pids = fs4.readdirSync("/proc").filter((p) => /^\d+$/.test(p) && Number(p) !== process.pid);
+    pids = fs5.readdirSync("/proc").filter((p) => /^\d+$/.test(p) && Number(p) !== process.pid);
   } catch {
   }
   for (const p of pids) {
     try {
-      const stat = fs4.readFileSync(`/proc/${p}/stat`, "utf8");
+      const stat = fs5.readFileSync(`/proc/${p}/stat`, "utf8");
       const session = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[3]);
-      const holdsOutput = () => fs4.readdirSync(`/proc/${p}/fd`).some((fd) => outputs.includes(readLink(`/proc/${p}/fd/${fd}`)));
+      const holdsOutput = () => fs5.readdirSync(`/proc/${p}/fd`).some((fd) => outputs.includes(readLink(`/proc/${p}/fd/${fd}`)));
       if (session === pid || outputs.length && holdsOutput()) process.kill(Number(p), "SIGKILL");
     } catch {
     }
@@ -396,34 +531,35 @@ function killTree(pid, outputs) {
 function newCwdFile() {
   try {
     if (!cwdDir) {
-      const dir = fs4.mkdtempSync(path4.join(os3.tmpdir(), "zoicode-bash-"));
-      process.once("exit", () => fs4.rmSync(dir, { recursive: true, force: true }));
+      const dir = fs5.mkdtempSync(path6.join(os5.tmpdir(), "zoicode-bash-"));
+      process.once("exit", () => fs5.rmSync(dir, { recursive: true, force: true }));
       cwdDir = dir;
     }
-    return path4.join(cwdDir, `cwd-${randomUUID()}`);
+    return path6.join(cwdDir, `cwd-${randomUUID()}`);
   } catch {
     return void 0;
   }
 }
 function isDirectory(p) {
   try {
-    return fs4.statSync(p).isDirectory();
+    return fs5.statSync(p).isDirectory();
   } catch {
     return false;
   }
 }
 function readLink(p) {
   try {
-    return fs4.readlinkSync(p);
+    return fs5.readlinkSync(p);
   } catch {
     return "";
   }
 }
-var SAFE_COMMANDS, SAFE_GIT, longFlag, shortFlag, UNSAFE_ARGS, BashTool, OUTPUT_LIMIT, HALF, OUTPUT_CAP, OutputBuffer, cwdDir, shellQuote;
+var SAFE_COMMANDS, SAFE_GIT, longFlag, shortFlag, UNSAFE_ARGS, NEVER_RULED, SUBCOMMAND_TOOLS, NEVER_RULED_SUB, GIT_RULED, gitUnsafeForRule, HARMLESS_REDIRECTS, BashTool, OUTPUT_LIMIT, HALF, OUTPUT_CAP, OutputBuffer, cwdDir, shellQuote;
 var init_bash = __esm({
   "src/tools/bash.ts"() {
     "use strict";
     init_git();
+    init_secrets();
     SAFE_COMMANDS = /* @__PURE__ */ new Set([
       "ls",
       "pwd",
@@ -443,7 +579,6 @@ var init_bash = __esm({
       "date",
       "whoami",
       "uname",
-      "printenv",
       "sort",
       "diff"
     ]);
@@ -469,6 +604,161 @@ var init_bash = __esm({
       // `date MMDDhhmm` sets the clock like --set, so the only operands allowed are +FORMAT and option values.
       ["date", (w, prev) => longFlag(w, "set") || shortFlag(w, "s", "dfIr") || !/^[-+]/.test(w) && !/^(-[dfr]|--(date|file|reference|rfc-3339))$/.test(prev)]
     ]);
+    NEVER_RULED = /* @__PURE__ */ new Set([
+      "env",
+      "sudo",
+      "doas",
+      "su",
+      "runuser",
+      "pkexec",
+      "sh",
+      "bash",
+      "zsh",
+      "dash",
+      "ksh",
+      "fish",
+      "busybox",
+      "eval",
+      "exec",
+      "command",
+      "builtin",
+      "source",
+      ".",
+      "trap",
+      "enable",
+      "coproc",
+      "time",
+      "xargs",
+      "parallel",
+      "timeout",
+      "nohup",
+      "nice",
+      "ionice",
+      "stdbuf",
+      "setsid",
+      "flock",
+      "watch",
+      "chroot",
+      "unshare",
+      "nsenter",
+      "strace",
+      "script",
+      "ssh",
+      "awk",
+      "gawk",
+      "nawk",
+      "mawk",
+      "sed",
+      "perl",
+      "python",
+      "python2",
+      "python3",
+      "node",
+      "nodejs",
+      "ruby",
+      "php",
+      "lua",
+      "luajit",
+      "tclsh",
+      "wish",
+      "expect",
+      "Rscript",
+      "osascript",
+      "pwsh",
+      "vi",
+      "vim",
+      "nvim",
+      "ex",
+      "ed",
+      "emacs",
+      "less",
+      "more",
+      "man",
+      "tar",
+      "rsync",
+      "scp",
+      "open",
+      "xdg-open",
+      "npx",
+      "pnpx",
+      "bunx",
+      "uvx",
+      "pipx"
+    ]);
+    SUBCOMMAND_TOOLS = /* @__PURE__ */ new Set([
+      "git",
+      "npm",
+      "pnpm",
+      "yarn",
+      "bun",
+      "deno",
+      "cargo",
+      "go",
+      "docker",
+      "kubectl",
+      "gh",
+      "pip",
+      "pip3",
+      "uv",
+      "poetry",
+      "make",
+      "just",
+      "dotnet",
+      "mvn",
+      "gradle",
+      "brew"
+    ]);
+    NEVER_RULED_SUB = {
+      npm: ["exec", "x", "explore"],
+      pnpm: ["exec", "dlx"],
+      yarn: ["exec", "dlx"],
+      bun: ["x"],
+      deno: ["eval"],
+      uv: ["run", "tool"],
+      poetry: ["run"],
+      gh: ["extension", "alias"]
+    };
+    GIT_RULED = /* @__PURE__ */ new Set([
+      "add",
+      "am",
+      "apply",
+      "blame",
+      "branch",
+      "checkout",
+      "cherry-pick",
+      "clean",
+      "commit",
+      "describe",
+      "diff",
+      "fetch",
+      "format-patch",
+      "grep",
+      "init",
+      "log",
+      "ls-files",
+      "merge",
+      "mv",
+      "notes",
+      "pull",
+      "push",
+      "rebase",
+      "reflog",
+      "remote",
+      "reset",
+      "restore",
+      "revert",
+      "rev-parse",
+      "rm",
+      "shortlog",
+      "show",
+      "stash",
+      "status",
+      "switch",
+      "tag",
+      "worktree"
+    ]);
+    gitUnsafeForRule = (word, sub) => longFlag(word, "upload-pack", "receive-pack", "exec", "output", "ext-diff", "open-files-in-pager", "template", "config", "config-env") || shortFlag(word, "c") || sub === "grep" && shortFlag(word, "O") || sub === "rebase" && shortFlag(word, "x");
+    HARMLESS_REDIRECTS = /(^|[ \t])(\d?>&\d|&?\d?>[ \t]*\/dev\/null)(?=[ \t]|$)/g;
     BashTool = {
       name: "Bash",
       description: "Run a bash command and return its combined stdout/stderr and exit code. The working directory persists between calls. Default timeout 120s (max 600s). Avoid interactive commands. Prefer Read/Glob/Grep/LS over cat/find/grep/ls for exploring files.",
@@ -483,7 +773,7 @@ var init_bash = __esm({
       },
       readOnly: false,
       label: (i) => typeof i?.command === "string" ? i.command : "",
-      isSafe: (i, ctx) => isSafeCommand(i?.command) && (!runsGit(i.command) || riskyGitConfig(shellCwd(ctx))?.length === 0),
+      isSafe: (i, ctx) => isSafeCommand(i?.command) && (!runsGit(i.command) || riskyGitConfig(shellCwd(ctx))?.length === 0) && !argsTouchSecrets(i.command, shellCwd(ctx)),
       run(input, ctx) {
         const command = input?.command;
         if (typeof command !== "string" || !command.trim()) {
@@ -534,9 +824,9 @@ exit $__rc` : command;
             child.stderr.unref();
             if (cwdFile) {
               try {
-                const dir = fs4.readFileSync(cwdFile, "utf8").replace(/\n$/, "");
-                if (path4.isAbsolute(dir) && isDirectory(dir)) ctx.state.bashCwd = dir;
-                fs4.rmSync(cwdFile);
+                const dir = fs5.readFileSync(cwdFile, "utf8").replace(/\n$/, "");
+                if (path6.isAbsolute(dir) && isDirectory(dir)) ctx.state.bashCwd = dir;
+                fs5.rmSync(cwdFile);
               } catch {
               }
             }
@@ -613,61 +903,10 @@ ${this.tail}`;
   }
 });
 
-// src/tools/types.ts
-import fs5 from "node:fs";
-import os4 from "node:os";
-import path5 from "node:path";
-function resolvePath(ctx, p) {
-  if (!p) return ctx.cwd;
-  if (p === "~" || p.startsWith("~/")) p = path5.join(os4.homedir(), p.slice(1));
-  return path5.resolve(ctx.cwd, p);
-}
-function displayPath(ctx, abs) {
-  const rel = path5.relative(ctx.cwd, abs);
-  return rel && !rel.startsWith("..") ? rel : abs;
-}
-function realTarget(abs) {
-  abs = path5.resolve(abs);
-  const parts = abs.split(path5.sep).filter(Boolean);
-  let real = path5.parse(abs).root;
-  for (let links = 0; parts.length; ) {
-    const next = path5.join(real, parts.shift());
-    let link;
-    try {
-      link = fs5.readlinkSync(next);
-    } catch {
-      real = next;
-      continue;
-    }
-    if (++links > 40) return next;
-    parts.unshift(...link.split(path5.sep).filter(Boolean));
-    if (path5.isAbsolute(link)) real = path5.parse(link).root;
-  }
-  return real;
-}
-function isInsideDir(dir, abs) {
-  const rel = path5.relative(realTarget(dir), realTarget(abs));
-  return rel === "" || rel !== ".." && !rel.startsWith(".." + path5.sep) && !path5.isAbsolute(rel);
-}
-function truncate(s, max = 3e4) {
-  if (s.length <= max) return s;
-  const half = Math.floor(max / 2);
-  return `${s.slice(0, half)}
-
-... [${s.length - max} characters truncated] ...
-
-${s.slice(-half)}`;
-}
-var init_types = __esm({
-  "src/tools/types.ts"() {
-    "use strict";
-  }
-});
-
 // src/tools/files.ts
 import { isUtf8 } from "node:buffer";
 import fs6 from "node:fs/promises";
-import path6 from "node:path";
+import path7 from "node:path";
 import { createTwoFilesPatch } from "diff";
 function makeDiff(file, before, after) {
   try {
@@ -769,7 +1008,7 @@ var init_files = __esm({
         }
         const current = existed ? await readText(abs) : { text: "", utf8: true };
         if (!current.utf8) return { output: notUtf8(abs), isError: true };
-        await fs6.mkdir(path6.dirname(abs), { recursive: true });
+        await fs6.mkdir(path7.dirname(abs), { recursive: true });
         await fs6.writeFile(abs, input.content);
         ctx.readFiles.set(abs, (await fs6.stat(abs)).mtimeMs);
         const lines = input.content.split("\n").length;
@@ -853,7 +1092,7 @@ var init_files = __esm({
 // src/tools/search.ts
 import fsCb from "node:fs";
 import fs7 from "node:fs/promises";
-import path7 from "node:path";
+import path8 from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
 import { glob } from "tinyglobby";
@@ -868,7 +1107,7 @@ function loopGuard() {
     const st = await fs7.stat(target).catch(() => null);
     if (!st?.isDirectory() || !st.ino) return false;
     const id = `${st.dev}:${st.ino}`;
-    for (let dir = path7.dirname(link), up = path7.dirname(dir); ; dir = up, up = path7.dirname(dir)) {
+    for (let dir = path8.dirname(link), up = path8.dirname(dir); ; dir = up, up = path8.dirname(dir)) {
       if (await idOf(dir) === id) return true;
       if (up === dir) return false;
     }
@@ -876,12 +1115,22 @@ function loopGuard() {
   function realpath(link, cb) {
     fsCb.realpath(link, (err, resolved) => {
       if (err) return cb(err, resolved);
+      if (inSecrets(resolved)) return cb(Object.assign(new Error(`link into a credential folder at ${link}`), { code: "EACCES" }), resolved);
       loops(link, resolved).then(
         (loop) => cb(loop ? Object.assign(new Error(`symlink loop at ${link}`), { code: "ELOOP" }) : null, resolved)
       );
     });
   }
-  return { realpath };
+  const secret = secretMatcher();
+  function readdir(dir, opts, cb) {
+    const done = typeof opts === "function" ? opts : cb;
+    const clean = dir.replace(/\/+$/, "") || "/";
+    if (secret(clean)) return done(null, []);
+    const filter = (err, entries) => done(err, entries?.filter((e) => !secret(path8.join(clean, typeof e === "string" ? e : e.name))));
+    if (typeof opts === "function") fsCb.readdir(dir, filter);
+    else fsCb.readdir(dir, opts, filter);
+  }
+  return { realpath, readdir };
 }
 function walk(pattern, cwd, signal) {
   return glob(pattern, {
@@ -978,6 +1227,7 @@ var IGNORE, GlobTool, WALK_MAX_BYTES, CHUNK_BYTES, MAX_LINE, SLOW_MS, BUDGET_MS,
 var init_search = __esm({
   "src/tools/search.ts"() {
     "use strict";
+    init_secrets();
     init_types();
     IGNORE = ["**/node_modules/**", "**/.git/**", "**/dist/**", "**/build/**", "**/.next/**", "**/__pycache__/**"];
     GlobTool = {
@@ -998,7 +1248,7 @@ var init_search = __esm({
         const paths = await walk(input.pattern, cwd, ctx.signal);
         ctx.signal?.throwIfAborted();
         const mtimes = await Promise.all(paths.map((p) => fs7.stat(p).then((st) => st.mtimeMs, () => 0)));
-        const entries = paths.map((path14, i) => ({ path: path14, mtime: mtimes[i] })).sort((a, b) => b.mtime - a.mtime);
+        const entries = paths.map((path15, i) => ({ path: path15, mtime: mtimes[i] })).sort((a, b) => b.mtime - a.mtime);
         const files = entries.slice(0, 200).map((e) => e.path);
         if (!files.length) return { output: "No files found", summary: "Found 0 files" };
         const more = entries.length > files.length ? `
@@ -1378,11 +1628,7 @@ var init_tools = __esm({
 });
 
 // src/agent.ts
-import path8 from "node:path";
-function ruleProgram(command) {
-  const program2 = command.trim().split(/[ \t]+/)[0];
-  return /^[\w@./+-][\w@./+:-]*$/.test(program2) && !WRAPPERS.has(path8.basename(program2)) ? program2 : void 0;
-}
+import path9 from "node:path";
 function isSimpleCommand(command) {
   const line = command.replace(/(^|[ \t])(\d?>&\d|&?\d?>[ \t]*\/dev\/null)(?=[ \t]|$)/g, "$1");
   let quote = "";
@@ -1497,58 +1743,19 @@ function safeLabel(tool, input) {
     return "";
   }
 }
-var EDIT_TOOLS, PLAN_TOOLS, MAX_RESULT_CHARS, MAX_PROMPT_CHARS, WRAPPERS, PLAN_REMINDER, SUBAGENT_PREFIX, Agent, article;
+var EDIT_TOOLS, PLAN_TOOLS, MAX_RESULT_CHARS, MAX_PROMPT_CHARS, PLAN_REMINDER, SUBAGENT_PREFIX, Agent, article;
 var init_agent = __esm({
   "src/agent.ts"() {
     "use strict";
     init_prompt();
     init_tools();
+    init_bash();
+    init_secrets();
     init_types();
     EDIT_TOOLS = /* @__PURE__ */ new Set(["Write", "Edit"]);
     PLAN_TOOLS = /* @__PURE__ */ new Set(["Bash", "WebFetch"]);
     MAX_RESULT_CHARS = 1e5;
     MAX_PROMPT_CHARS = 2e5;
-    WRAPPERS = /* @__PURE__ */ new Set([
-      "env",
-      "sudo",
-      "doas",
-      "su",
-      "runuser",
-      "pkexec",
-      "sh",
-      "bash",
-      "zsh",
-      "dash",
-      "ksh",
-      "fish",
-      "busybox",
-      "eval",
-      "exec",
-      "command",
-      "builtin",
-      "source",
-      ".",
-      "trap",
-      "enable",
-      "coproc",
-      "time",
-      "xargs",
-      "parallel",
-      "timeout",
-      "nohup",
-      "nice",
-      "ionice",
-      "stdbuf",
-      "setsid",
-      "flock",
-      "watch",
-      "chroot",
-      "unshare",
-      "nsenter",
-      "strace",
-      "script",
-      "ssh"
-    ]);
     PLAN_REMINDER = "Plan mode is active. Do not make any changes yet: no file edits or writes, and no commands that change state. Research with read-only tools (Read, Glob, Grep, LS, read-only Bash commands, WebFetch), then call ExitPlanMode with a concise, concrete implementation plan for the user to approve. If the request is just a question, answer it directly instead.";
     SUBAGENT_PREFIX = "You are a subagent working on one task for the main Zoi Code agent. Work autonomously with your tools, then reply with a concise final report containing everything the main agent needs: findings, file paths with line numbers, and conclusions. Nobody sees your intermediate messages, only the final report.\n\nTask:\n";
     Agent = class _Agent {
@@ -1618,12 +1825,13 @@ var init_agent = __esm({
       }
       /**
        * The rules an "always" answer stores for this call; empty when it can only be allowed once. A Bash
-       * rule names the program, and only ever approves a simple command of it (see isSimpleCommand).
+       * rule names the program (and the subcommand, for tools like git and npm), and only ever covers one
+       * plain command of it that runs no other program (see bashRule).
        */
       alwaysRules(tool, input) {
         if (tool.name === "Bash") {
-          const program2 = ruleProgram(String(input?.command ?? ""));
-          return program2 ? [`Bash(${program2})`] : [];
+          const rule = bashRule(String(input?.command ?? ""), shellCwd(this.ctx));
+          return rule ? [`Bash(${rule})`] : [];
         }
         if (tool.name === "WebFetch") {
           try {
@@ -1634,15 +1842,35 @@ var init_agent = __esm({
         }
         return [tool.name];
       }
-      /** Whether a Write/Edit target lies inside the project once symlinks are followed. */
+      /**
+       * Whether a Write/Edit target lies inside the project once symlinks are followed, and outside the
+       * folders whose files make programs run later: .git (hooks, config) and the custom commands in
+       * .zoicode and .claude. Auto-accepted edits and Edit/Write rules only cover such a target.
+       */
       inProject(file) {
-        return typeof file === "string" && isInsideDir(this.cwd, resolvePath(this.ctx, file));
+        if (typeof file !== "string") return false;
+        const abs = resolvePath(this.ctx, file);
+        return isInsideDir(this.cwd, abs) && ![".git", ".zoicode", ".claude"].some((d) => isInsideDir(path9.join(this.cwd, d), abs)) && !abs.split(path9.sep).includes(".git");
+      }
+      /**
+       * Whether Read, LS, Glob or Grep would read inside a credential folder (see secrets.ts). Searches
+       * skip the ones under the folder they search, so only a path or pattern inside one counts.
+       */
+      readsSecrets(tool, input) {
+        if (!["Read", "LS", "Glob", "Grep"].includes(tool.name)) return false;
+        const str = (v) => typeof v === "string" && v ? v : void 0;
+        if (tool.name === "Read") return !!str(input?.file_path) && inSecrets(resolvePath(this.ctx, input.file_path));
+        const base = resolvePath(this.ctx, str(input?.path) ?? ".");
+        const pattern = tool.name === "Glob" ? str(input?.pattern) : tool.name === "Grep" ? str(input?.glob) : void 0;
+        return inSecrets(base) || !!pattern && inSecrets(path9.resolve(base, fixedPrefix(pattern)));
       }
       async permitted(tool, input) {
-        if (tool.readOnly || this.permissionMode === "bypass") return true;
+        if (this.permissionMode === "bypass") return true;
+        const secret = this.readsSecrets(tool, input);
+        if (tool.readOnly && !secret) return true;
         if (this.permissionMode === "acceptEdits" && EDIT_TOOLS.has(tool.name) && this.inProject(input.file_path)) return true;
         if (tool.isSafe?.(input, this.ctx)) return true;
-        const rules = this.alwaysRules(tool, input);
+        const rules = secret ? [] : this.alwaysRules(tool, input);
         const coverable = tool.name === "Bash" ? isSimpleCommand(String(input.command)) : !EDIT_TOOLS.has(tool.name) || this.inProject(input.file_path);
         if (coverable && rules.length && rules.every((r) => this.allowRules.has(r))) return true;
         if (!this.canUseTool) return false;
@@ -1885,10 +2113,10 @@ ${summary}` },
 
 // src/sessions.ts
 import fs8 from "node:fs";
-import path9 from "node:path";
+import path10 from "node:path";
 import crypto from "node:crypto";
 function projectDir(cwd) {
-  return path9.join(CONFIG_DIR, "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
+  return path10.join(CONFIG_DIR, "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
 }
 function newSession(cwd) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -1903,14 +2131,14 @@ function saveSession(s) {
     const first = s.messages.find((m) => m.role === "user" && typeof m.content === "string");
     s.title = String(first?.content ?? "").split("\n")[0].slice(0, 80);
   }
-  fs8.writeFileSync(path9.join(dir, `${s.id}.json`), JSON.stringify(s));
+  fs8.writeFileSync(path10.join(dir, `${s.id}.json`), JSON.stringify(s));
 }
 function listSessions(cwd) {
   const dir = projectDir(cwd);
   if (!fs8.existsSync(dir)) return [];
   return fs8.readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => {
     try {
-      return JSON.parse(fs8.readFileSync(path9.join(dir, f), "utf8"));
+      return JSON.parse(fs8.readFileSync(path10.join(dir, f), "utf8"));
     } catch {
       return null;
     }
@@ -1938,7 +2166,7 @@ __export(setup_exports, {
   saveCredentials: () => saveCredentials
 });
 import fs9 from "node:fs";
-import path10 from "node:path";
+import path11 from "node:path";
 import chalk2 from "chalk";
 function askSecret(question) {
   const stdin = process.stdin;
@@ -1998,7 +2226,7 @@ function readKeyFromStdin() {
   });
 }
 function saveCredentials(values) {
-  const file = path10.join(CONFIG_DIR, ".env");
+  const file = path11.join(CONFIG_DIR, ".env");
   const existing = fs9.existsSync(file) ? fs9.readFileSync(file, "utf8") : "";
   const lines = existing.split("\n").filter((l) => {
     const key = parseDotEnvLine(l)?.[0];
@@ -2056,7 +2284,7 @@ async function runSetup() {
 ${gold.bold("Welcome to Zoi Code!")} ${dim("Let's get you set up.")}
 `);
   console.log(dim("Zoi Code talks to the Raon API. Paste your API key below; it is saved to"));
-  console.log(dim(`${path10.join(CONFIG_DIR, ".env")} (readable only by you).`));
+  console.log(dim(`${path11.join(CONFIG_DIR, ".env")} (readable only by you).`));
   console.log(dim(`No key yet? Get one at ${RAON_SITE}
 `));
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -2068,7 +2296,7 @@ ${gold.bold("Welcome to Zoi Code!")} ${dim("Let's get you set up.")}
     if (await checkAndSave(key)) return;
   }
   console.log(berry(`
-Setup failed. You can also export RAON_API_KEY, or put RAON_API_KEY=<key> in ${path10.join(CONFIG_DIR, ".env")}.`));
+Setup failed. You can also export RAON_API_KEY, or put RAON_API_KEY=<key> in ${path11.join(CONFIG_DIR, ".env")}.`));
   console.log(dim("(A .env file in your project is never read.)"));
   process.exit(1);
 }
@@ -2920,8 +3148,8 @@ var init_Cat = __esm({
 
 // src/ui/commands.ts
 import fs10 from "node:fs";
-import os5 from "node:os";
-import path11 from "node:path";
+import os6 from "node:os";
+import path12 from "node:path";
 function runsWhileBusy(cmd, args) {
   return typeof cmd.whileBusy === "function" ? cmd.whileBusy(args) : !!cmd.whileBusy;
 }
@@ -2936,12 +3164,12 @@ function parseFrontmatter(text) {
   return { meta, body: m[2] };
 }
 function loadCustomCommands(cwd, skipped = []) {
-  const home = os5.homedir();
+  const home = os6.homedir();
   const dirs = [
-    [path11.join(home, ".claude", "commands"), "user"],
-    [path11.join(home, ".zoicode", "commands"), "user"],
-    [path11.join(cwd, ".claude", "commands"), "project"],
-    [path11.join(cwd, ".zoicode", "commands"), "project"]
+    [path12.join(home, ".claude", "commands"), "user"],
+    [path12.join(home, ".zoicode", "commands"), "user"],
+    [path12.join(cwd, ".claude", "commands"), "project"],
+    [path12.join(cwd, ".zoicode", "commands"), "project"]
   ];
   const found = /* @__PURE__ */ new Map();
   for (const [dir, source] of dirs) {
@@ -2953,7 +3181,7 @@ function loadCustomCommands(cwd, skipped = []) {
     }
     for (const file of files) {
       const name = file.slice(0, -3).toLowerCase().replace(/[^a-z0-9_-]/g, "-");
-      const full = path11.join(dir, file);
+      const full = path12.join(dir, file);
       let text;
       try {
         if (!fs10.statSync(full).isFile()) throw new Error("not a regular file");
@@ -2989,7 +3217,7 @@ function suggestCommands(value, commands = COMMANDS) {
 function expandMentions(text, cwd, readFiles) {
   const attached = [];
   for (const m of text.matchAll(/(?:^|\s)@([^\s]+)/g)) {
-    const abs = path11.resolve(cwd, m[1]);
+    const abs = path12.resolve(cwd, m[1]);
     try {
       const stat = fs10.statSync(abs);
       if (stat.isFile() && stat.size < 256e3) {
@@ -3133,7 +3361,7 @@ Use /model <name> to switch.`,
           api.info(
             `\u{1F510} Permission mode: ${api.agent.permissionMode}
 Always allowed this session: ${rules.length ? rules.join(", ") : "(none)"}
-Read-only tools and safe commands (ls, cat, git status\u2026) never ask.`,
+Read-only tools and safe commands (ls, cat, git status\u2026) never ask, except in credential folders like ~/.ssh.`,
             C.parchment
           );
         }
@@ -3157,7 +3385,7 @@ Read-only tools and safe commands (ls, cat, git status\u2026) never ask.`,
         whileBusy: true,
         description: "Save the conversation to a markdown file",
         run: (args, api) => {
-          const file = path11.resolve(api.agent.cwd, args.trim() || `zoicode-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}.md`);
+          const file = path12.resolve(api.agent.cwd, args.trim() || `zoicode-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}.md`);
           const parts = [`# Zoi Code conversation
 
 ${(/* @__PURE__ */ new Date()).toLocaleString()} \xB7 ${api.agent.cwd}
@@ -3175,7 +3403,7 @@ ${m.content.trim()}`);
             }
           }
           fs10.writeFileSync(file, parts.join("\n\n") + "\n");
-          api.info(`\u{1F4DC} Exported ${api.agent.messages.length} messages to ${path11.relative(api.agent.cwd, file) || file}`, C.grass);
+          api.info(`\u{1F4DC} Exported ${api.agent.messages.length} messages to ${path12.relative(api.agent.cwd, file) || file}`, C.grass);
         }
       },
       {
@@ -3325,14 +3553,14 @@ var init_markdown = __esm({
 });
 
 // src/ui/Messages.tsx
-import path12 from "node:path";
+import path13 from "node:path";
 import { Box as Box2, Text as Text2 } from "ink";
 import { jsx as jsx2, jsxs as jsxs2 } from "react/jsx-runtime";
 function shortLabel(label, cwd) {
   const lines = sanitize(label).split("\n");
   label = lines[0] + (lines.length > 1 ? " \u2026" : "");
-  if (path12.isAbsolute(label)) {
-    const rel = path12.relative(cwd, label);
+  if (path13.isAbsolute(label)) {
+    const rel = path13.relative(cwd, label);
     if (!rel.startsWith("..")) return rel || ".";
   }
   return label.length > 120 ? label.slice(0, 117) + "\u2026" : label;
@@ -3524,7 +3752,7 @@ function PermissionPrompt({
   const command = sanitize(String(input.command ?? ""));
   const ruleLabel = (rule) => {
     const m = rule.match(/^(\w+)\((.*)\)$/);
-    if (tool.name === "Bash" && m) return `simple \`${sanitize(m[2])}\` commands`;
+    if (tool.name === "Bash" && m) return `\`${sanitize(m[2])}\` commands`;
     if (tool.name === "WebFetch" && m) return sanitize(m[2]);
     return `${tool.name} in this project`;
   };
@@ -3542,8 +3770,9 @@ function PermissionPrompt({
     else if (key.return) onAnswer(options[sel].answer);
     else if (/^[1-9]$/.test(ch) && Number(ch) <= n) onAnswer(options[Number(ch) - 1].answer);
   });
-  const title = tool.name === "Bash" ? "Bash command" : tool.name === "Write" ? "Create file" : tool.name === "Edit" ? "Edit file" : tool.name === "WebFetch" ? "Fetch from the web" : tool.name;
-  const abs = input.file_path ? resolvePath({ cwd }, String(input.file_path)) : "";
+  const title = tool.name === "Bash" ? "Bash command" : tool.name === "Write" ? "Create file" : tool.name === "Edit" ? "Edit file" : tool.name === "WebFetch" ? "Fetch from the web" : tool.readOnly ? `${tool.name} in a credential folder` : tool.name;
+  const target = input.file_path ?? input.path;
+  const abs = target ? resolvePath({ cwd }, String(target)) : "";
   const file = abs ? sanitize(displayPath({ cwd }, abs)) : "";
   const outside = abs && !isInsideDir(cwd, abs);
   return /* @__PURE__ */ jsxs3(Box3, { flexDirection: "column", borderStyle: "round", borderColor: C.gold, paddingX: 1, children: [
@@ -3559,6 +3788,7 @@ function PermissionPrompt({
         file,
         outside ? /* @__PURE__ */ jsx3(Text3, { color: C.berry, children: " (outside the project)" }) : null
       ] }),
+      tool.name === "Glob" || tool.name === "Grep" ? /* @__PURE__ */ jsx3(Text3, { color: C.dim, wrap: "truncate-end", children: sanitize(String(input.glob ?? input.pattern ?? "")) }) : null,
       diff ? /* @__PURE__ */ jsx3(Text3, { children: diff }) : null
     ] }) }),
     /* @__PURE__ */ jsx3(Text3, { color: C.parchment, children: "Do you want to proceed?" }),
@@ -3799,7 +4029,7 @@ var init_pinBottom = __esm({
 // src/ui/App.tsx
 import { useEffect as useEffect2, useLayoutEffect, useRef as useRef3, useState as useState4 } from "react";
 import fs12 from "node:fs";
-import path13 from "node:path";
+import path14 from "node:path";
 import { Box as Box5, Static, Text as Text5, useApp, useInput as useInput3, useStdout } from "ink";
 import wrapAnsi2 from "wrap-ansi";
 import { jsx as jsx5, jsxs as jsxs5 } from "react/jsx-runtime";
@@ -4247,13 +4477,13 @@ function App({ agent, session: initialSession, initialPrompt, banner, makeBanner
     }
     if (raw.startsWith("#")) {
       const note = raw.slice(1).trim();
-      const file = path13.join(agent.cwd, "ZOICODE.md");
+      const file = path14.join(agent.cwd, "ZOICODE.md");
       try {
         const prefix = fs12.existsSync(file) ? fs12.readFileSync(file, "utf8").endsWith("\n") ? "" : "\n" : "# ZOICODE.md\n\n";
         fs12.appendFileSync(file, `${prefix}- ${note}
 `);
         agent.refreshSystemPrompt();
-        info(`\u{1F9E0} Remembered in ${path13.relative(agent.cwd, file)}: ${note}`, C.purple);
+        info(`\u{1F9E0} Remembered in ${path14.relative(agent.cwd, file)}: ${note}`, C.purple);
       } catch (e) {
         info(`\u2717 Could not save the note: ${e.message}`, C.berry);
       }
