@@ -6,7 +6,7 @@
 You need Node.js 22.12+ and a Raon API key.
 
 ```sh
-npm install -g github:albusdemens/zoicode
+npm install -g https://github.com/albusdemens/zoicode/archive/refs/heads/main.tar.gz
 ```
 
 Then run `raoncode` in your project folder. The first time, it asks for your API key and saves it

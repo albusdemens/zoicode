@@ -142,7 +142,7 @@ npm run typecheck
 npm test             # unit and integration tests
 ```
 
-`dist/cli.js` is committed, so `npm install -g github:albusdemens/zoicode` works without a build step
+`dist/cli.js` is committed, so `npm install -g https://github.com/albusdemens/zoicode/archive/refs/heads/main.tar.gz` works without a build step
 on the user's machine: run `npm run build` before committing changes to `src/`.
 
 It is written in TypeScript with [Ink](https://github.com/vadimdemedes/ink) (React for the
