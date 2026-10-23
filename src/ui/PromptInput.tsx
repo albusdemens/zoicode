@@ -33,7 +33,7 @@ const MAX_SUGGESTIONS = 8;
 
 function modeOf(value: string): { glyph: string; color: string; hint: string } {
   if (value.startsWith('!')) return { glyph: '!', color: C.berry, hint: 'bash mode' };
-  if (value.startsWith('#')) return { glyph: '#', color: C.purple, hint: 'memory mode · saved to RAONCODE.md' };
+  if (value.startsWith('#')) return { glyph: '#', color: C.purple, hint: 'memory mode · saved to ZOICODE.md' };
   if (value.startsWith('/')) return { glyph: '›', color: C.sky, hint: '' };
   return { glyph: '›', color: C.gold, hint: '' };
 }
@@ -130,7 +130,7 @@ export function PromptInput({ active, history, suggestions, onSubmit, onKey }: P
           ) : (
             <Text color={C.dim}>
               {active ? chalk.inverse(' ') : ''}
-              {active ? 'Plant a request… (/ for commands, @ to mention files)' : ''}
+              {active ? 'Type a request… (/ for commands, @ to mention files)' : ''}
             </Text>
           )}
         </Box>

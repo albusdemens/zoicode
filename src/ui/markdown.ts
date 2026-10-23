@@ -73,7 +73,7 @@ export function renderMarkdown(text: string, width = process.stdout.columns || 8
   }
 }
 
-/** Colored unified diff, Stardew-style: crops (green) for additions, berries (red) for removals. */
+/** Colored unified diff: green for additions, red for removals, with line numbers. */
 export function renderDiff(patch: string, maxLines = 40): string {
   const out: string[] = [];
   let oldLn = 0;

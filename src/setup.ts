@@ -50,7 +50,7 @@ function askSecret(question: string): Promise<string> {
   });
 }
 
-/** Scripted setup (`echo "$KEY" | raoncode --setup`): the key is the first non-empty line of stdin. */
+/** Scripted setup (`echo "$KEY" | zoicode --setup`): the key is the first non-empty line of stdin. */
 function readKeyFromStdin(): Promise<string> {
   const stdin = process.stdin;
   stdin.setEncoding('utf8');
@@ -70,7 +70,7 @@ function readKeyFromStdin(): Promise<string> {
   });
 }
 
-/** Saves KEY=value pairs to ~/.raoncode/.env, readable only by the user. */
+/** Saves KEY=value pairs to ~/.zoicode/.env, readable only by the user. */
 export function saveCredentials(values: Record<string, string>) {
   const file = path.join(CONFIG_DIR, '.env');
   const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
@@ -99,7 +99,7 @@ async function checkAndSave(key: string): Promise<boolean> {
     return false;
   }
   console.log(grass(`✓ works! (${models.length} model${models.length === 1 ? '' : 's'} available)`));
-  // The environment and the install's .env win over ~/.raoncode/.env; look before process.env changes.
+  // The environment and the install's .env win over ~/.zoicode/.env; look before process.env changes.
   const shadow = process.env.RAON_API_KEY === key ? undefined : envSource('RAON_API_KEY');
   process.env.RAON_API_KEY = key;
   let file: string;
@@ -127,14 +127,14 @@ export async function runSetup(): Promise<void> {
     // No terminal to type into (a pipe, CI, ssh without -t): one key from stdin, one try.
     const key = await readKeyFromStdin();
     if (!key) {
-      console.error(berry('No API key given. Run raoncode --setup in a terminal, pipe the key in (echo "$KEY" | raoncode --setup), or export RAON_API_KEY.'));
+      console.error(berry('No API key given. Run zoicode --setup in a terminal, pipe the key in (echo "$KEY" | zoicode --setup), or export RAON_API_KEY.'));
       process.exit(1);
     }
     if (!(await checkAndSave(key))) process.exit(1);
     return;
   }
-  console.log(`\n${gold.bold('🌱 Welcome to Raoncode!')} ${dim("Let's get your farm ready.")}\n`);
-  console.log(dim('Raoncode talks to the Raon API. Paste your API key below; it is saved to'));
+  console.log(`\n${gold.bold('Welcome to Zoi Code!')} ${dim("Let's get you set up.")}\n`);
+  console.log(dim('Zoi Code talks to the Raon API. Paste your API key below; it is saved to'));
   console.log(dim(`${path.join(CONFIG_DIR, '.env')} (readable only by you).\n`));
 
   for (let attempt = 1; attempt <= 3; attempt++) {

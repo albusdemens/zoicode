@@ -104,7 +104,7 @@ export function PermissionPrompt({
     tool.name === 'Bash'
       ? 'Bash command'
       : tool.name === 'Write'
-        ? 'Plant a new file'
+        ? 'Create file'
         : tool.name === 'Edit'
           ? 'Edit file'
           : tool.name === 'WebFetch'
@@ -117,7 +117,7 @@ export function PermissionPrompt({
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={C.gold} paddingX={1}>
       <Text color={C.gold} bold>
-        🐔 {title}
+        🐾 {title}
       </Text>
       <Box marginY={1} flexDirection="column" paddingLeft={2}>
         {tool.name === 'Bash' ? (
@@ -175,7 +175,7 @@ export function PlanApproval({ plan, maxLines = 30, onAnswer }: { plan: string; 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={C.sky} paddingX={1}>
       <Text color={C.sky} bold>
-        📜 Raon's plan for the season
+        📜 Raon's plan
       </Text>
       <Box marginY={1} paddingLeft={1}>
         <Text>{shown}</Text>

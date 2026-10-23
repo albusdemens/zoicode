@@ -31,12 +31,12 @@ occasional blink or tail flick. `--no-splash` skips the opening.
   → *plan*. In plan mode Raon only researches, then shows a plan for you to approve.
 - **Track its work.** Bigger tasks get a to-do list (the Quest Log), and Raon can hand searches
   off to subagents that have their own context.
-- **Remember.** Sessions are saved per folder: `raoncode -c` continues the last one, and
-  `raoncode -r` lists them. Project notes in `RAONCODE.md` (or `CLAUDE.md`) are loaded into every
+- **Remember.** Sessions are saved per folder: `zoicode -c` continues the last one, and
+  `zoicode -r` lists them. Project notes in `ZOICODE.md` (or `CLAUDE.md`) are loaded into every
   conversation. `/init` writes one, and a line starting with `#` adds a note.
 - **Stay within the context window.** The conversation is compacted automatically near the
   model's context limit; `/compact` does it on demand.
-- **Run in scripts.** `raoncode -p "…"` prints the answer and exits, with plain text, JSON or
+- **Run in scripts.** `zoicode -p "…"` prints the answer and exits, with plain text, JSON or
   streaming JSON output.
 
 ## Using it
@@ -57,7 +57,7 @@ occasional blink or tail flick. `--no-splash` skips the opening.
 Start a line with:
 
 - `!` to run a shell command yourself (`!git log --oneline -5`). Raon sees the output.
-- `#` to save a note to `RAONCODE.md`.
+- `#` to save a note to `ZOICODE.md`.
 
 Add `@path/to/file` anywhere in a message to attach that file.
 
@@ -70,7 +70,7 @@ Add `@path/to/file` anywhere in a message to attach that file.
 | `/compact [focus]` | Summarize the conversation to free up context |
 | `/cost` | Token usage for this session |
 | `/model [name]` | Show or switch the model |
-| `/init` | Write a `RAONCODE.md` describing this project |
+| `/init` | Write a `ZOICODE.md` describing this project |
 | `/memory` | Show which memory files are loaded |
 | `/permissions` | Show the current mode and the rules you've allowed |
 | `/resume [id]` | List saved sessions, or resume one |
@@ -78,25 +78,25 @@ Add `@path/to/file` anywhere in a message to attach that file.
 | `/pet` | Pet the cat |
 | `/exit` | Quit |
 
-**Your own commands:** put a Markdown file in `.raoncode/commands/` (for the project) or
-`~/.raoncode/commands/` (for all projects). `review.md` becomes `/review`, and `$ARGUMENTS` in the
+**Your own commands:** put a Markdown file in `.zoicode/commands/` (for the project) or
+`~/.zoicode/commands/` (for all projects). `review.md` becomes `/review`, and `$ARGUMENTS` in the
 file is replaced by whatever you type after the command. An optional `description:` in YAML
 front matter shows up in `/help`. Commands from `.claude/commands/` work too.
 
 ### Command line
 
 ```
-raoncode [prompt]                 start (optionally with a first message)
-raoncode -p "prompt"              print the answer and exit; piped stdin is added to the prompt
+zoicode [prompt]                 start (optionally with a first message)
+zoicode -p "prompt"              print the answer and exit; piped stdin is added to the prompt
     --output-format text|json|stream-json
     --verbose                     show tool calls and reasoning on stderr
-raoncode -c                       continue the most recent session in this folder
-raoncode -r [id]                  resume a session (without an id: list them)
-raoncode --permission-mode default|acceptEdits|plan|bypass
-raoncode --yolo                   never ask for permission (same as --permission-mode bypass)
-raoncode -m <model>               use another model
-raoncode --no-splash              skip the opening scene
-raoncode --setup                  enter or change the API key
+zoicode -c                       continue the most recent session in this folder
+zoicode -r [id]                  resume a session (without an id: list them)
+zoicode --permission-mode default|acceptEdits|plan|bypass
+zoicode --yolo                   never ask for permission (same as --permission-mode bypass)
+zoicode -m <model>               use another model
+zoicode --no-splash              skip the opening scene
+zoicode --setup                  enter or change the API key
 ```
 
 In `-p` mode nobody can answer a permission prompt, so anything that would ask is refused.
@@ -116,7 +116,7 @@ Add `--permission-mode acceptEdits` to let it edit files, or `--yolo` to allow e
 
 ## Configuration
 
-Set these in your environment or in `~/.raoncode/.env`:
+Set these in your environment or in `~/.zoicode/.env`:
 
 | Variable | Default | |
 |----------|---------|---|
@@ -125,11 +125,11 @@ Set these in your environment or in `~/.raoncode/.env`:
 | `RAON_MODEL` | `raon-1-mini-preview` | |
 | `RAON_CONTEXT_WINDOW` | `262144` | In tokens, e.g. `131072` or `128k`; sets when auto-compaction starts |
 
-Zoi Code keeps its files in `~/.raoncode/`:
+Zoi Code keeps its files in `~/.zoicode/`:
 
 - `.env`: your key.
 - `projects/<folder>/<id>.json`: saved sessions.
-- `RAONCODE.md`: notes for every project.
+- `ZOICODE.md`: notes for every project.
 - `commands/`: your slash commands.
 
 ## Development
@@ -151,7 +151,7 @@ terminal), like Claude Code, and talks to Raon through the OpenAI SDK.
 **Tools for working on the interface.** They need Python 3 with `pip install pyte pillow numpy`:
 
 - `test/tui.py` runs Zoi Code in a pseudo-terminal, types keys and saves screenshots. Example:
-  `python3 test/tui.py <folder> wait:2 "hello<enter>" until:Pondered shot:out.png`
+  `python3 test/tui.py <folder> wait:2 "hello<enter>" until:Thought shot:out.png`
 - `test/termshot.py` renders terminal output to a PNG.
 - `scripts/scene-preview.ts` renders the opening scene's frames.
 - `scripts/sprite-preview.ts` validates and renders the sprites.

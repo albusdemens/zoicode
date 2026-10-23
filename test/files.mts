@@ -14,7 +14,7 @@ const test = (name: string, fn: () => void | Promise<void>) => tests.push([name,
 
 const tmpDirs: string[] = [];
 function tmpDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'raoncode-files-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zoicode-files-'));
   tmpDirs.push(dir);
   return dir;
 }

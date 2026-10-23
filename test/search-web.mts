@@ -19,7 +19,7 @@ const test = (name: string, fn: () => void | Promise<void>) => tests.push([name,
 
 const dirs: string[] = [];
 function tmpCtx(signal?: AbortSignal): ToolContext {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'raoncode-test-'));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'zoicode-test-'));
   dirs.push(cwd);
   return { cwd, readFiles: new Map(), state: {}, signal };
 }

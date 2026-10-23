@@ -41,7 +41,7 @@ function fakeLLM(replies: Reply[], contextWindow = 262_144) {
   return { llm: llm as unknown as LLM, requests };
 }
 
-const tmpDir = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'raoncode-agent-')));
+const tmpDir = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zoicode-agent-')));
 
 async function turn(agent: Agent, prompt: string, signal?: AbortSignal): Promise<AgentEvent[]> {
   const events: AgentEvent[] = [];

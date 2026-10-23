@@ -35,12 +35,12 @@ export function Bubble({ text }: { text: string }) {
 
 /** What the cat says, by occasion. */
 export const CAT_LINES = {
-  greet: ['Mrrp! Ready when you are.', 'Meow! Let’s grow some code.', '*stretches* Hi, farmer!'],
+  greet: ['Mrrp! Ready when you are.', 'Meow! Let’s write some code.', '*stretches* Hi there!'],
   permission: ['Mrrow? Your call.', '*tilts head*', 'Can I? Can I?'],
   plan: ['*sniffs the plan*', 'Ooh, a plan!', 'Purr… looks tasty.'],
   allowed: ['*happy tail flick*', 'Mrrp!', 'On it!'],
   denied: ['*flattens ears*', 'Okay… 😿', 'Fair enough.'],
-  done: ['Purrr ✓', '*slow blink*', 'Harvest complete!', 'Nap time? 💤'],
+  done: ['Purrr ✓', '*slow blink*', 'All done!', 'Nap time? 💤'],
   error: ['Hss… that broke.', '*puffs up*', 'Uh oh… 😿'],
   interrupted: ['*freezes*', 'Okay, stopping!', '*sits very still*'],
   pet: ['Purrrr ♥', '*headbutts your hand*', '*slow blink* ♥', '*rolls over*'],

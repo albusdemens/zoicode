@@ -12,7 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'raoncode-cli-')));
+const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zoicode-cli-')));
 const freshDir = () => fs.mkdtempSync(path.join(tmp, 'd'));
 // config.ts reads the home directory once, when it is imported: point it at a scratch one first.
 process.env.HOME = freshDir();
@@ -160,14 +160,14 @@ test('RAON_CONTEXT_WINDOW: blank means the default, anything but a token count i
 });
 
 test('blank .env lines and empty exports hide nothing, and envSource says where a value came from', async () => {
-  // An install layout of its own: <install>/src/config.ts reads <install>/.env, then ~/.raoncode/.env.
+  // An install layout of its own: <install>/src/config.ts reads <install>/.env, then ~/.zoicode/.env.
   const install = freshDir();
   const home = freshDir();
   fs.mkdirSync(path.join(install, 'src'));
   fs.copyFileSync(path.join(root, 'src', 'config.ts'), path.join(install, 'src', 'config.ts'));
   fs.writeFileSync(path.join(install, '.env'), 'RAON_BASE_URL=\nRAON_API_KEY=install-key\nRAON_MODEL = "m-install"  # pinned\n');
-  fs.mkdirSync(path.join(home, '.raoncode'));
-  fs.writeFileSync(path.join(home, '.raoncode', '.env'), 'RAON_BASE_URL=http://home.example/v1   \nRAON_API_KEY=home-key\nRAON_CONTEXT_WINDOW=128k\n');
+  fs.mkdirSync(path.join(home, '.zoicode'));
+  fs.writeFileSync(path.join(home, '.zoicode', '.env'), 'RAON_BASE_URL=http://home.example/v1   \nRAON_API_KEY=home-key\nRAON_CONTEXT_WINDOW=128k\n');
   fs.writeFileSync(
     path.join(install, 'probe.mts'),
     "import { envSource, loadConfig } from './src/config.ts';\n" +
@@ -187,7 +187,7 @@ test('blank .env lines and empty exports hide nothing, and envSource says where 
     model: 'm-install',
     contextWindow: 131072, // the exported empty RAON_CONTEXT_WINDOW doesn't block it either
     keyFrom: path.join(install, '.env'),
-    urlFrom: path.join(home, '.raoncode', '.env'),
+    urlFrom: path.join(home, '.zoicode', '.env'),
   });
   const shell = await probe({ RAON_API_KEY: 'shell-key' });
   assert.deepEqual([shell.apiKey, shell.keyFrom], ['shell-key', 'environment']);
@@ -312,7 +312,7 @@ test('--setup without a terminal reads the key from stdin, checks it and saves i
   const home = freshDir();
   let r = await run('echo good-key | raon --setup', { env: { HOME: home } });
   assert.equal(r.code, 0, r.stdout + r.stderr);
-  assert.match(fs.readFileSync(path.join(home, '.raoncode', '.env'), 'utf8'), /^RAON_API_KEY=good-key$/m);
+  assert.match(fs.readFileSync(path.join(home, '.zoicode', '.env'), 'utf8'), /^RAON_API_KEY=good-key$/m);
   // The test exports RAON_API_KEY, which would win over the saved key next time: setup must say so.
   assert.match(r.stdout, /Your environment also sets RAON_API_KEY/);
 
@@ -330,7 +330,7 @@ test('--setup without a terminal reads the key from stdin, checks it and saves i
 
 test('a key that works but cannot be saved is used for the run, not rejected', async () => {
   const home = freshDir();
-  fs.writeFileSync(path.join(home, '.raoncode'), 'a file, so the config dir cannot be created (even as root)');
+  fs.writeFileSync(path.join(home, '.zoicode'), 'a file, so the config dir cannot be created (even as root)');
   const r = await run('echo good-key | raon --setup -p hi', { env: { HOME: home } });
   assert.equal(r.code, 0, r.stdout + r.stderr);
   assert.match(r.stdout, /The key works but could not be saved/);

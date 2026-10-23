@@ -14,7 +14,7 @@ import pyte
 COLS, ROWS = int(os.environ.get('TUI_COLS', 110)), int(os.environ.get('TUI_ROWS', 50))
 KEYS = {'<enter>': '\r', '<esc>': '\x1b', '<tab>': '\t', '<stab>': '\x1b[Z', '<up>': '\x1b[A',
         '<down>': '\x1b[B', '<right>': '\x1b[C', '<left>': '\x1b[D', '<ctrl-c>': '\x03', '<bs>': '\x7f'}
-CLI = os.environ.get('RAON_CLI') or os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dist', 'cli.js')
+CLI = os.environ.get('ZOI_CLI') or os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dist', 'cli.js')
 
 screen = pyte.HistoryScreen(COLS, ROWS, history=2000)
 stream = pyte.ByteStream(screen)
@@ -23,11 +23,11 @@ pid, fd = pty.fork()
 if pid == 0:
     os.chdir(sys.argv[1])
     os.environ.update(TERM='xterm-256color', COLUMNS=str(COLS), LINES=str(ROWS), FORCE_COLOR='3')
-    if os.environ.get('RAON_TEST_HOME'):
-        # Keep test runs from touching the real ~/.raoncode.
-        os.makedirs(os.environ['RAON_TEST_HOME'], exist_ok=True)
-        os.environ['HOME'] = os.environ['RAON_TEST_HOME']
-    os.execvp('node', ['node', CLI] + os.environ.get('RAON_ARGS', '').split())
+    if os.environ.get('ZOI_TEST_HOME'):
+        # Keep test runs from touching the real ~/.zoicode.
+        os.makedirs(os.environ['ZOI_TEST_HOME'], exist_ok=True)
+        os.environ['HOME'] = os.environ['ZOI_TEST_HOME']
+    os.execvp('node', ['node', CLI] + os.environ.get('ZOI_ARGS', '').split())
 
 import fcntl, termios, struct
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', ROWS, COLS, 0, 0))

@@ -51,7 +51,7 @@ const PLAN_REMINDER =
   'request is just a question, answer it directly instead.';
 
 const SUBAGENT_PREFIX =
-  'You are a subagent working on one task for the main Raoncode agent. Work autonomously with your tools, ' +
+  'You are a subagent working on one task for the main Zoi Code agent. Work autonomously with your tools, ' +
   'then reply with a concise final report containing everything the main agent needs: findings, file paths ' +
   'with line numbers, and conclusions. Nobody sees your intermediate messages, only the final report.\n\nTask:\n';
 

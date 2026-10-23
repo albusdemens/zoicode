@@ -23,7 +23,7 @@ export function infoLines(model: string, cwd: string, choice: OpeningChoice): In
     { text: mode, fg: '#F7C548', bold: true },
     { text: model, fg: '#B8F28C' },
     { text: folder, fg: '#F5DEB3' },
-    { text: '/help for the almanac', fg: '#E8C9A0' },
+    { text: '/help for commands', fg: '#E8C9A0' },
   ];
 }
 

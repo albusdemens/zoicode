@@ -33,11 +33,11 @@ function loadDotEnv(file: string) {
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Never read the .env of the project being worked on: a repo could point RAON_BASE_URL at
 // someone else's server and collect your key. Only the install's own .env (a dev checkout)
-// and ~/.raoncode/.env are trusted, and real environment variables win over both.
+// and ~/.zoicode/.env are trusted, and real environment variables win over both.
 loadDotEnv(path.resolve(here, '..', '.env'));
-loadDotEnv(path.join(os.homedir(), '.raoncode', '.env'));
+loadDotEnv(path.join(os.homedir(), '.zoicode', '.env'));
 
-export const CONFIG_DIR = path.join(os.homedir(), '.raoncode');
+export const CONFIG_DIR = path.join(os.homedir(), '.zoicode');
 export const VERSION = '0.1.0';
 export const DEFAULT_CONTEXT_WINDOW = 262_144;
 
@@ -69,7 +69,7 @@ export function parseContextWindow(raw: string | undefined): number {
 export function loadConfig(overrides: Partial<Config> = {}): Config {
   const apiKey = nonEmpty(overrides.apiKey) ?? nonEmpty(process.env.RAON_API_KEY);
   if (!apiKey) {
-    throw new Error('RAON_API_KEY is not set. Run `raoncode --setup`, or export RAON_API_KEY.');
+    throw new Error('RAON_API_KEY is not set. Run `zoicode --setup`, or export RAON_API_KEY.');
   }
   const baseURL = nonEmpty(overrides.baseURL) ?? nonEmpty(process.env.RAON_BASE_URL) ?? 'https://raon-api.krafton.ai/v1';
   const protocol = URL.parse(baseURL)?.protocol;

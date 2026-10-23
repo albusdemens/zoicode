@@ -39,17 +39,17 @@ export function runsWhileBusy(cmd: Command, args: string): boolean {
   return typeof cmd.whileBusy === 'function' ? cmd.whileBusy(args) : !!cmd.whileBusy;
 }
 
-const INIT_PROMPT = `Please analyze this codebase and create a RAONCODE.md file in the project root. It will be given to future coding agents working in this repository.
+const INIT_PROMPT = `Please analyze this codebase and create a ZOICODE.md file in the project root. It will be given to future coding agents working in this repository.
 
 Include:
 1. Commands to build, lint, test and run (including how to run a single test).
 2. High-level architecture: the big picture that takes reading several files to understand.
 
-Be concise. Do not list every file, and do not invent information that isn't in the repo. If a RAONCODE.md or CLAUDE.md exists, improve it instead. Also include important parts of README.md, .cursorrules or similar files. Start the file with:
+Be concise. Do not list every file, and do not invent information that isn't in the repo. If a ZOICODE.md or CLAUDE.md exists, improve it instead. Also include important parts of README.md, .cursorrules or similar files. Start the file with:
 
-# RAONCODE.md
+# ZOICODE.md
 
-This file provides guidance to Raoncode when working with code in this repository.`;
+This file provides guidance to Zoi Code when working with code in this repository.`;
 
 export const COMMANDS: Command[] = [
   {
@@ -62,15 +62,15 @@ export const COMMANDS: Command[] = [
         .map(c => `  /${c.name.padEnd(12)} ${c.description}${c.source ? ` (${c.source})` : ''}`)
         .join('\n');
       api.info(
-        `🌾 Farmer's Almanac\n\nCommands\n${cmds}\n\nShortcuts\n` +
+        `Zoi Code help\n\nCommands\n${cmds}\n\nShortcuts\n` +
           '  !cmd         run a shell command directly\n' +
-          '  #note        save a note to RAONCODE.md\n' +
+          '  #note        save a note to ZOICODE.md\n' +
           '  @path        attach a file to your message\n' +
           '  \\ + enter    new line\n' +
           '  ↑ / ↓        prompt history\n' +
           '  shift+tab    cycle permission mode\n' +
           '  esc          interrupt Raon\n' +
-          '  ctrl+c ×2    leave the farm',
+          '  ctrl+c ×2    quit',
         C.parchment,
       );
     },
@@ -86,7 +86,7 @@ export const COMMANDS: Command[] = [
   },
   {
     name: 'compact',
-    description: 'Summarize the conversation to free up energy (context)',
+    description: 'Summarize the conversation to free up context',
     run: (args, api) => api.compact(args),
   },
   {
@@ -99,7 +99,7 @@ export const COMMANDS: Command[] = [
       const ctx = api.agent.contextTokens;
       const win = api.agent.llm.config.contextWindow;
       api.info(
-        `💰 Harvest report\n` +
+        `Token usage\n` +
           `  Input tokens:   ${u.promptTokens.toLocaleString()}\n` +
           `  Output tokens:  ${u.completionTokens.toLocaleString()}\n` +
           `  Context in use: ${ctx.toLocaleString()} / ${win.toLocaleString()} (${((ctx / win) * 100).toFixed(1)}%)`,
@@ -127,13 +127,13 @@ export const COMMANDS: Command[] = [
   },
   {
     name: 'init',
-    description: 'Write a RAONCODE.md with notes about this project',
+    description: 'Write a ZOICODE.md with notes about this project',
     run: (_a, api) => api.submit(INIT_PROMPT, '/init'),
   },
   {
     name: 'memory',
     whileBusy: true,
-    description: 'Show loaded memory files (RAONCODE.md, CLAUDE.md)',
+    description: 'Show loaded memory files (ZOICODE.md, CLAUDE.md)',
     run: (_a, api) => {
       const files = loadMemory(api.agent.cwd);
       api.info(
@@ -181,13 +181,13 @@ export const COMMANDS: Command[] = [
     whileBusy: true,
     description: 'Save the conversation to a markdown file',
     run: (args, api) => {
-      const file = path.resolve(api.agent.cwd, args.trim() || `raoncode-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.md`);
-      const parts: string[] = [`# Raoncode conversation\n\n${new Date().toLocaleString()} · ${api.agent.cwd}\n`];
+      const file = path.resolve(api.agent.cwd, args.trim() || `zoicode-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.md`);
+      const parts: string[] = [`# Zoi Code conversation\n\n${new Date().toLocaleString()} · ${api.agent.cwd}\n`];
       for (const m of api.agent.messages) {
         if (m.role === 'user' && typeof m.content === 'string') {
-          parts.push(`## 🧑‍🌾 You\n\n${m.content.replace(/\n\n<system-reminder>[\s\S]*?<\/system-reminder>$/, '')}`);
+          parts.push(`## You\n\n${m.content.replace(/\n\n<system-reminder>[\s\S]*?<\/system-reminder>$/, '')}`);
         } else if (m.role === 'assistant') {
-          if (typeof m.content === 'string' && m.content.trim()) parts.push(`## 🌱 Raon\n\n${m.content.trim()}`);
+          if (typeof m.content === 'string' && m.content.trim()) parts.push(`## Raon\n\n${m.content.trim()}`);
           for (const c of m.tool_calls ?? []) if ('function' in c) parts.push(`> 🔧 **${c.function.name}** \`${c.function.arguments.slice(0, 300)}\``);
         }
       }
@@ -208,7 +208,7 @@ export const COMMANDS: Command[] = [
     name: 'exit',
     whileBusy: true,
     aliases: ['quit', 'bye'],
-    description: 'Leave the farm',
+    description: 'Quit',
     run: (_a, api) => api.exit(),
   },
 ];
@@ -226,17 +226,17 @@ function parseFrontmatter(text: string): { meta: Record<string, string>; body: s
 }
 
 /**
- * Custom commands are markdown prompt files, like Claude Code's: ~/.raoncode/commands/*.md (user) and
- * .raoncode/commands/*.md (project). .claude/commands is read too, so existing commands just work.
+ * Custom commands are markdown prompt files, like Claude Code's: ~/.zoicode/commands/*.md (user) and
+ * .zoicode/commands/*.md (project). .claude/commands is read too, so existing commands just work.
  * `$ARGUMENTS` in the file is replaced with whatever follows the command.
  */
 export function loadCustomCommands(cwd: string, skipped: string[] = []): Command[] {
   const home = os.homedir();
   const dirs: [string, 'user' | 'project'][] = [
     [path.join(home, '.claude', 'commands'), 'user'],
-    [path.join(home, '.raoncode', 'commands'), 'user'],
+    [path.join(home, '.zoicode', 'commands'), 'user'],
     [path.join(cwd, '.claude', 'commands'), 'project'],
-    [path.join(cwd, '.raoncode', 'commands'), 'project'],
+    [path.join(cwd, '.zoicode', 'commands'), 'project'],
   ];
   const found = new Map<string, Command>();
   for (const [dir, source] of dirs) {

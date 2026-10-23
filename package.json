@@ -1,5 +1,5 @@
 {
-  "name": "raoncode",
+  "name": "zoicode",
   "version": "0.1.0",
   "description": "Zoi Code: a cozy coding agent for your terminal, powered by Raon",
   "keywords": [
@@ -25,7 +25,7 @@
   "author": "Alberto Cereser",
   "type": "module",
   "bin": {
-    "raoncode": "dist/cli.js"
+    "zoicode": "dist/cli.js"
   },
   "files": [
     "dist"

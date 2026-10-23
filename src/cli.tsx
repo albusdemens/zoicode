@@ -47,7 +47,7 @@ async function exitWhenFlushed(code: number): Promise<never> {
 }
 
 const program = new Command()
-  .name('raoncode')
+  .name('zoicode')
   .description('Zoi Code: a cozy coding agent for your terminal, powered by Raon')
   .version(VERSION)
   .argument('[prompt...]', 'initial prompt')
@@ -78,7 +78,7 @@ const program = new Command()
       // Look the session up before reading the prompt: `-p -r "fix it"` makes "fix it" the id,
       // and "No session matching" explains that better than "No prompt given".
       if (opts.resume === true && !opts.continue) {
-        console.error('--resume needs a session id with --print. Run raoncode -r to list the sessions here.');
+        console.error('--resume needs a session id with --print. Run zoicode -r to list the sessions here.');
         process.exit(1);
       }
       const session = resolveSession(cwd, !!opts.continue, opts.resume);
@@ -89,7 +89,7 @@ const program = new Command()
       const stdin = opts.setup ? '' : await readStdin(); // a piped --setup has used up stdin
       if (stdin) prompt = prompt ? `${prompt}\n\n${stdin}` : stdin;
       if (!prompt.trim()) {
-        console.error('No prompt given. Usage: raoncode -p "your prompt"');
+        console.error('No prompt given. Usage: zoicode -p "your prompt"');
         process.exit(1);
       }
       // Headless mode has nobody to ask, so non-safe tools need --yolo / acceptEdits.

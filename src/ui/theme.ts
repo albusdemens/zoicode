@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 
-/** Stardew Valley–inspired palette: wood, parchment, crops and gold. */
+/** The palette: warm wood, cream, gold, with green and berry accents (Stardew Valley-inspired). */
 export const C = {
   wood: '#8B5A2B',
   woodDark: '#5C3A1A',
@@ -32,28 +32,11 @@ export const paint = {
   dim: chalk.hex(C.dim),
 };
 
-/** Map today's date onto a Stardew-style calendar: 4 seasons of 28 days. */
-export function farmDate(d = new Date()): { season: string; icon: string; day: number } {
-  const seasons = [
-    { season: 'Winter', icon: '❄' }, { season: 'Spring', icon: '✿' },
-    { season: 'Summer', icon: '☀' }, { season: 'Fall', icon: '🍂' },
-  ];
-  const s = seasons[Math.floor(((d.getMonth() + 1) % 12) / 3)];
-  return { ...s, day: Math.min(28, d.getDate()) };
-}
-
-export function farmClock(d = new Date()): string {
-  const h = d.getHours();
-  const m = Math.floor(d.getMinutes() / 10) * 10;
-  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')}${h < 12 ? 'am' : 'pm'}`;
-}
-
 export const SPINNER_VERBS = [
-  'Planting', 'Watering', 'Tilling', 'Foraging', 'Harvesting', 'Fishing for bugs', 'Mining for answers',
-  'Feeding the chickens', 'Brewing coffee', 'Petting the dog', 'Chopping wood', 'Milking the cows',
-  'Picking parsnips', 'Fertilizing', 'Crafting', 'Smelting', 'Composting', 'Herding goats',
-  'Shearing sheep', 'Pickling', 'Sprinkling', 'Daydreaming by the river',
+  'Thinking', 'Pondering', 'Purring', 'Tinkering', 'Brewing coffee', 'Untangling yarn', 'Chasing bugs',
+  'Kneading the code', 'Sniffing around', 'Scheming', 'Doodling', 'Batting at bugs', 'Stretching',
+  'Mulling it over', 'Connecting the dots', 'Polishing', 'Napping on the keyboard', 'Chasing the cursor',
 ];
 
-/** Crop growth stages, used as the thinking spinner. */
+/** A flower opening and closing: the thinking spinner. */
 export const SPINNER_FRAMES = ['·', '⁘', '✢', '✿', '❀', '✿', '✢', '⁘'];

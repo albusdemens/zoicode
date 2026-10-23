@@ -19,7 +19,7 @@ export type Item =
   | { kind: 'info'; id: string; text: string; color?: string };
 
 const TOOL_ICONS: Record<string, string> = {
-  Read: '📖', Write: '🌱', Edit: '✎', Bash: '⛏', Glob: '🔍', Grep: '🔍', LS: '🗂', TodoWrite: '📜', WebFetch: '🌐', Task: '🐝', ExitPlanMode: '📜',
+  Read: '📖', Write: '📝', Edit: '✎', Bash: '⚡', Glob: '🔍', Grep: '🔍', LS: '🗂', TodoWrite: '📜', WebFetch: '🌐', Task: '🧶', ExitPlanMode: '📜',
 };
 
 function shortLabel(label: string, cwd: string): string {
@@ -97,7 +97,7 @@ export function ToolLine({ item, cwd }: { item: Extract<Item, { kind: 'tool' }>;
           {TOOL_ICONS[item.name] ?? '⚙'} {item.progress ? sanitize(item.progress) : 'working…'}
         </Text>
       ) : item.status === 'denied' ? (
-        <Text color={C.stone}>  ⎿  Denied by farmer</Text>
+        <Text color={C.stone}>  ⎿  Denied</Text>
       ) : r?.isError ? (
         <Result color={C.berry}>{preview(r.output, 6)}</Result>
       ) : (
@@ -152,7 +152,7 @@ export function MessageItem({ item, cwd }: { item: Item; cwd: string }) {
       return (
         <Box marginTop={1}>
           <Text color={C.dim} italic>
-            ✻ Pondered by the pond for {item.seconds}s
+            ✻ Thought for {item.seconds}s
           </Text>
         </Box>
       );

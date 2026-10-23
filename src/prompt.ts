@@ -4,14 +4,14 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { CONFIG_DIR } from './config.js';
 
-export const MEMORY_FILES = ['RAONCODE.md', 'CLAUDE.md'];
+export const MEMORY_FILES = ['ZOICODE.md', 'CLAUDE.md'];
 
 export interface MemoryFile {
   path: string;
   content: string;
 }
 
-/** Memory files: ~/.raoncode/RAONCODE.md, then every RAONCODE.md/CLAUDE.md from the filesystem root down to cwd. */
+/** Memory files: ~/.zoicode/ZOICODE.md, then every ZOICODE.md/CLAUDE.md from the filesystem root down to cwd. */
 export function loadMemory(cwd: string): MemoryFile[] {
   const found: MemoryFile[] = [];
   const add = (p: string) => {
@@ -19,7 +19,7 @@ export function loadMemory(cwd: string): MemoryFile[] {
       found.push({ path: p, content: fs.readFileSync(p, 'utf8') });
     } catch { /* missing */ }
   };
-  add(path.join(CONFIG_DIR, 'RAONCODE.md'));
+  add(path.join(CONFIG_DIR, 'ZOICODE.md'));
   const dirs: string[] = [];
   for (let d = path.resolve(cwd); ; d = path.dirname(d)) {
     dirs.unshift(d);
@@ -46,7 +46,7 @@ export function buildSystemPrompt(cwd: string, memory: MemoryFile[]): string {
       memory.map(m => `<file path="${m.path}">\n${m.content.trim()}\n</file>`).join('\n\n')
     : '';
 
-  return `You are Raoncode, an interactive CLI coding agent. You help the user with software engineering tasks in their project: fixing bugs, adding features, refactoring, explaining code, running commands.
+  return `You are Zoi Code, an interactive CLI coding agent. You help the user with software engineering tasks in their project: fixing bugs, adding features, refactoring, explaining code, running commands.
 
 # How to work
 - Be concise and direct. Your output is shown in a terminal and rendered as Markdown. Skip preambles and summaries the user did not ask for.

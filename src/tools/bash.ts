@@ -290,7 +290,7 @@ let cwdDir: string | undefined;
 function newCwdFile(): string | undefined {
   try {
     if (!cwdDir) {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'raoncode-bash-'));
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zoicode-bash-'));
       process.once('exit', () => fs.rmSync(dir, { recursive: true, force: true }));
       cwdDir = dir;
     }

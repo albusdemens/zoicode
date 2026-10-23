@@ -17,7 +17,7 @@ const tests: [string, () => void | Promise<void>][] = [];
 const test = (name: string, fn: () => void | Promise<void>) => tests.push([name, fn]);
 
 function tmpCtx(): ToolContext {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'raoncode-test-'));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'zoicode-test-'));
   return { cwd, readFiles: new Map(), state: {} };
 }
 

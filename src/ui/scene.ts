@@ -85,7 +85,7 @@ const ROOM = {
   deskDark: '#5E3218',
 };
 
-/** The farmhouse wall (wooden planks with the odd nail) and the desk. */
+/** The wall (wooden planks with the odd nail) and the desk. */
 function paintRoom(p: Paint, L: Layout) {
   const rand = seeded(7);
   const h = L.bannerRows * 2;
@@ -189,9 +189,9 @@ function paintPrompt(p: Paint, L: Layout) {
   p.text(0, top + 1, '│', { fg: PROMPT.border });
   p.text(w - 1, top + 1, '│', { fg: PROMPT.border });
   p.text(2, top + 1, '›', { fg: PROMPT.glyph, bold: true });
-  p.text(5, top + 1, 'Plant a request… (/ for commands, @ to mention files)', { fg: PROMPT.placeholder });
+  p.text(5, top + 1, 'Type a request… (/ for commands, @ to mention files)', { fg: PROMPT.placeholder });
   p.text(0, top + 2, '╰' + '─'.repeat(w - 2) + '╯', { fg: PROMPT.border });
-  p.text(2, top + 3, '? /help for the almanac', { fg: PROMPT.status });
+  p.text(2, top + 3, '? /help for commands', { fg: PROMPT.status });
 }
 
 // ---- putting it together ---------------------------------------------------------

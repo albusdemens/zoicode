@@ -11,7 +11,7 @@ import { BashTool, isSafeCommand, splitCommand } from '../src/tools/bash.js';
 import { type ToolContext, truncate } from '../src/tools/types.js';
 
 // The tool makes its private temp dir under os.tmpdir() on first use; give it one this test can inspect.
-const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'raoncode-bash-test-'));
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'zoicode-bash-test-'));
 process.env.TMPDIR = tmpRoot;
 
 const tests: [string, () => void | Promise<void>][] = [];
@@ -197,7 +197,7 @@ test('the working directory carries over through a private temp file only', asyn
   await BashTool.run({ command: 'cd sub' }, ctx);
   assert.equal(ctx.state.bashCwd, sub);
   // A file at the old predictable path is never read, even when a command ends before reporting its directory.
-  const planted = path.join(os.tmpdir(), `raoncode-cwd-${process.pid}`);
+  const planted = path.join(os.tmpdir(), `zoicode-cwd-${process.pid}`);
   fs.writeFileSync(planted, `${os.homedir()}\n`);
   try {
     await BashTool.run({ command: 'exit 3' }, ctx);
@@ -208,7 +208,7 @@ test('the working directory carries over through a private temp file only', asyn
   }
   assert.equal((await BashTool.run({ command: 'pwd' }, ctx)).output, `${sub}\n\nExit code 0`);
   // Between calls the private 0700 dir is empty.
-  const dirs = fs.readdirSync(tmpRoot).filter(d => d.startsWith('raoncode-bash-'));
+  const dirs = fs.readdirSync(tmpRoot).filter(d => d.startsWith('zoicode-bash-'));
   assert.equal(dirs.length, 1);
   assert.equal(fs.statSync(path.join(tmpRoot, dirs[0])).mode & 0o777, 0o700);
   assert.deepEqual(fs.readdirSync(path.join(tmpRoot, dirs[0])), []);

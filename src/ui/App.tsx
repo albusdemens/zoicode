@@ -19,7 +19,7 @@ import { PromptInput } from './PromptInput.js';
 import { sanitize } from './sanitize.js';
 import { PET_MARGIN, PET_ROWS } from './scene.js';
 import { CAT_W } from './sprites/index.js';
-import { C, farmClock, farmDate, paint, SPINNER_FRAMES, SPINNER_VERBS } from './theme.js';
+import { C, paint, SPINNER_FRAMES, SPINNER_VERBS } from './theme.js';
 
 let nextId = 0;
 const uid = () => String(++nextId);
@@ -31,7 +31,7 @@ const MODE_LABEL: Record<PermissionMode, { text: string; color: string }> = {
   default: { text: '', color: C.dim },
   acceptEdits: { text: '⏵⏵ auto-accept edits on', color: C.purple },
   plan: { text: '⏸ plan mode on', color: C.sky },
-  bypass: { text: '⚠ bypass permissions on — no fences on this farm', color: C.berry },
+  bypass: { text: '⚠ bypass permissions on: nothing asks first', color: C.berry },
 };
 
 /** Something that runs one at a time: a turn, a `!` command, or a slash command that changes state. */
@@ -77,15 +77,16 @@ function safe(f: () => unknown): string {
   }
 }
 
-function EnergyBar({ used, total }: { used: number; total: number }) {
-  const left = Math.max(0, 1 - used / total);
-  const n = Math.round(left * 10);
-  const color = left > 0.5 ? C.grass : left > 0.2 ? C.gold : C.berry;
+/** How full the context window is: a small meter that turns from green to red as it fills. */
+function ContextMeter({ used, total }: { used: number; total: number }) {
+  const full = Math.min(1, Math.max(0, used / total));
+  const n = Math.round(full * 10);
+  const color = full < 0.5 ? C.grass : full < 0.8 ? C.gold : C.berry;
   return (
     <Text>
-      <Text color={C.gold}>⚡</Text>
-      <Text color={color}>{'█'.repeat(n)}</Text>
-      <Text color={C.woodDark}>{'█'.repeat(10 - n)}</Text>
+      <Text color={C.dim}>context </Text>
+      <Text color={color}>{'▰'.repeat(n)}</Text>
+      <Text color={C.woodDark}>{'▱'.repeat(10 - n)}</Text>
     </Text>
   );
 }
@@ -393,7 +394,7 @@ export function App({ agent, session: initialSession, initialPrompt, banner, mak
     }
 
     if (!exiting.current && agent.estimateContextTokens() > agent.llm.config.contextWindow * 0.85) {
-      info('🥱 Energy is low — auto-compacting the conversation…', C.gold);
+      info('The context is almost full: compacting the conversation…', C.gold);
       await doCompact('');
     }
   }
@@ -416,7 +417,7 @@ export function App({ agent, session: initialSession, initialPrompt, banner, mak
   }
 
   async function doCompact(instructions: string) {
-    const ac = beginWork('Composting old memories');
+    const ac = beginWork('Compacting the conversation');
     try {
       const summary = await agent.compact(instructions, ac.signal);
       if (ac.signal.aborted) {
@@ -424,7 +425,7 @@ export function App({ agent, session: initialSession, initialPrompt, banner, mak
         return;
       }
       resetScreen([
-        { kind: 'info', id: uid(), text: '🍂 Conversation composted. Summary:', color: C.gold },
+        { kind: 'info', id: uid(), text: 'Conversation compacted. Summary:', color: C.gold },
         { kind: 'assistant', id: uid(), text: summary || '(empty)' },
       ]);
     } catch (e) {
@@ -512,9 +513,9 @@ export function App({ agent, session: initialSession, initialPrompt, banner, mak
 
     if (raw.startsWith('#')) {
       const note = raw.slice(1).trim();
-      const file = path.join(agent.cwd, 'RAONCODE.md');
+      const file = path.join(agent.cwd, 'ZOICODE.md');
       try {
-        const prefix = fs.existsSync(file) ? (fs.readFileSync(file, 'utf8').endsWith('\n') ? '' : '\n') : '# RAONCODE.md\n\n';
+        const prefix = fs.existsSync(file) ? (fs.readFileSync(file, 'utf8').endsWith('\n') ? '' : '\n') : '# ZOICODE.md\n\n';
         fs.appendFileSync(file, `${prefix}- ${note}\n`);
         agent.refreshSystemPrompt();
         info(`🧠 Remembered in ${path.relative(agent.cwd, file)}: ${note}`, C.purple);
@@ -567,7 +568,6 @@ export function App({ agent, session: initialSession, initialPrompt, banner, mak
   const l = live.current;
   const rows = stdout.rows || 24;
   const cols = stdout.columns || 80;
-  const date = farmDate();
   const modeLabel = MODE_LABEL[mode] ?? MODE_LABEL.default;
   const prompting = !!(permission || planApproval);
   const petHeight = PET_ROWS;
@@ -591,12 +591,12 @@ export function App({ agent, session: initialSession, initialPrompt, banner, mak
   const usage = (agent.totalUsage.promptTokens + agent.totalUsage.completionTokens).toLocaleString();
 
   const left = exitArmed
-    ? 'Press Ctrl-C again to leave the farm'
+    ? 'Press Ctrl-C again to quit'
     : modeLabel.text
       ? `${modeLabel.text} (shift+tab to cycle)`
       : busy
         ? 'esc to interrupt · type to queue a message'
-        : '? /help for the almanac';
+        : '? /help for commands';
 
 
   return (
@@ -679,8 +679,8 @@ export function App({ agent, session: initialSession, initialPrompt, banner, mak
         </Box>
         <Box flexShrink={0}>
           <Text color={C.dim}>
-            {cols >= 90 ? `${date.icon} ${date.season} ${date.day} · ${farmClock()}  ` : ''}
-            <EnergyBar used={agent.contextTokens} total={agent.llm.config.contextWindow} /> <Text color={C.gold}>{usage}g</Text>
+            <ContextMeter used={agent.contextTokens} total={agent.llm.config.contextWindow} />
+            {cols >= 90 ? <Text color={C.dim}>  {usage} tokens</Text> : null}
           </Text>
         </Box>
       </Box>

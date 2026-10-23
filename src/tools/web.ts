@@ -70,7 +70,7 @@ export const WebFetchTool: Tool<{ url: string }> = {
 
     const stop = new AbortController(); // drops the connection once we know the body is not wanted
     const signal = AbortSignal.any([AbortSignal.timeout(30_000), stop.signal, ...(ctx.signal ? [ctx.signal] : [])]);
-    const headers = { 'User-Agent': 'raoncode/0.1 (+cli)', Accept: 'text/html,text/plain,application/json,*/*' };
+    const headers = { 'User-Agent': 'zoicode/0.1 (+cli)', Accept: 'text/html,text/plain,application/json,*/*' };
     let res: Response;
     try {
       // Redirects are followed by hand, so every hop gets the URL rules and a hop to another host is not fetched:

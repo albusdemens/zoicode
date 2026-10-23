@@ -51,7 +51,7 @@ function parseContextWindow(raw) {
 function loadConfig(overrides = {}) {
   const apiKey = nonEmpty(overrides.apiKey) ?? nonEmpty(process.env.RAON_API_KEY);
   if (!apiKey) {
-    throw new Error("RAON_API_KEY is not set. Run `raoncode --setup`, or export RAON_API_KEY.");
+    throw new Error("RAON_API_KEY is not set. Run `zoicode --setup`, or export RAON_API_KEY.");
   }
   const baseURL = nonEmpty(overrides.baseURL) ?? nonEmpty(process.env.RAON_BASE_URL) ?? "https://raon-api.krafton.ai/v1";
   const protocol = URL.parse(baseURL)?.protocol;
@@ -73,8 +73,8 @@ var init_config = __esm({
     loadedFrom = /* @__PURE__ */ new Map();
     here = path.dirname(fileURLToPath(import.meta.url));
     loadDotEnv(path.resolve(here, "..", ".env"));
-    loadDotEnv(path.join(os.homedir(), ".raoncode", ".env"));
-    CONFIG_DIR = path.join(os.homedir(), ".raoncode");
+    loadDotEnv(path.join(os.homedir(), ".zoicode", ".env"));
+    CONFIG_DIR = path.join(os.homedir(), ".zoicode");
     VERSION = "0.1.0";
     DEFAULT_CONTEXT_WINDOW = 262144;
   }
@@ -165,7 +165,7 @@ function loadMemory(cwd) {
     } catch {
     }
   };
-  add(path2.join(CONFIG_DIR, "RAONCODE.md"));
+  add(path2.join(CONFIG_DIR, "ZOICODE.md"));
   const dirs = [];
   for (let d = path2.resolve(cwd); ; d = path2.dirname(d)) {
     dirs.unshift(d);
@@ -190,7 +190,7 @@ function buildSystemPrompt(cwd, memory) {
   const memorySection = memory.length ? "\n# Project memory\nThese instruction files were provided by the user. Follow them.\n\n" + memory.map((m) => `<file path="${m.path}">
 ${m.content.trim()}
 </file>`).join("\n\n") : "";
-  return `You are Raoncode, an interactive CLI coding agent. You help the user with software engineering tasks in their project: fixing bugs, adding features, refactoring, explaining code, running commands.
+  return `You are Zoi Code, an interactive CLI coding agent. You help the user with software engineering tasks in their project: fixing bugs, adding features, refactoring, explaining code, running commands.
 
 # How to work
 - Be concise and direct. Your output is shown in a terminal and rendered as Markdown. Skip preambles and summaries the user did not ask for.
@@ -218,7 +218,7 @@ var init_prompt = __esm({
   "src/prompt.ts"() {
     "use strict";
     init_config();
-    MEMORY_FILES = ["RAONCODE.md", "CLAUDE.md"];
+    MEMORY_FILES = ["ZOICODE.md", "CLAUDE.md"];
   }
 });
 
@@ -309,7 +309,7 @@ function killTree(pid, outputs) {
 function newCwdFile() {
   try {
     if (!cwdDir) {
-      const dir = fs3.mkdtempSync(path3.join(os3.tmpdir(), "raoncode-bash-"));
+      const dir = fs3.mkdtempSync(path3.join(os3.tmpdir(), "zoicode-bash-"));
       process.once("exit", () => fs3.rmSync(dir, { recursive: true, force: true }));
       cwdDir = dir;
     }
@@ -1180,7 +1180,7 @@ var init_web = __esm({
         if (invalid) return { output: invalid, isError: true };
         const stop = new AbortController();
         const signal = AbortSignal.any([AbortSignal.timeout(3e4), stop.signal, ...ctx.signal ? [ctx.signal] : []]);
-        const headers = { "User-Agent": "raoncode/0.1 (+cli)", Accept: "text/html,text/plain,application/json,*/*" };
+        const headers = { "User-Agent": "zoicode/0.1 (+cli)", Accept: "text/html,text/plain,application/json,*/*" };
         let res;
         try {
           for (let current = url, hops = 0; ; hops++) {
@@ -1449,7 +1449,7 @@ var init_agent = __esm({
       "ssh"
     ]);
     PLAN_REMINDER = "Plan mode is active. Do not make any changes yet: no file edits or writes, and no commands that change state. Research with read-only tools (Read, Glob, Grep, LS, read-only Bash commands, WebFetch), then call ExitPlanMode with a concise, concrete implementation plan for the user to approve. If the request is just a question, answer it directly instead.";
-    SUBAGENT_PREFIX = "You are a subagent working on one task for the main Raoncode agent. Work autonomously with your tools, then reply with a concise final report containing everything the main agent needs: findings, file paths with line numbers, and conclusions. Nobody sees your intermediate messages, only the final report.\n\nTask:\n";
+    SUBAGENT_PREFIX = "You are a subagent working on one task for the main Zoi Code agent. Work autonomously with your tools, then reply with a concise final report containing everything the main agent needs: findings, file paths with line numbers, and conclusions. Nobody sees your intermediate messages, only the final report.\n\nTask:\n";
     Agent = class _Agent {
       llm;
       cwd;
@@ -1945,16 +1945,16 @@ async function runSetup() {
   if (!process.stdin.isTTY) {
     const key = await readKeyFromStdin();
     if (!key) {
-      console.error(berry('No API key given. Run raoncode --setup in a terminal, pipe the key in (echo "$KEY" | raoncode --setup), or export RAON_API_KEY.'));
+      console.error(berry('No API key given. Run zoicode --setup in a terminal, pipe the key in (echo "$KEY" | zoicode --setup), or export RAON_API_KEY.'));
       process.exit(1);
     }
     if (!await checkAndSave(key)) process.exit(1);
     return;
   }
   console.log(`
-${gold.bold("\u{1F331} Welcome to Raoncode!")} ${dim("Let's get your farm ready.")}
+${gold.bold("Welcome to Zoi Code!")} ${dim("Let's get you set up.")}
 `);
-  console.log(dim("Raoncode talks to the Raon API. Paste your API key below; it is saved to"));
+  console.log(dim("Zoi Code talks to the Raon API. Paste your API key below; it is saved to"));
   console.log(dim(`${path9.join(CONFIG_DIR, ".env")} (readable only by you).
 `));
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -2677,9 +2677,9 @@ function paintPrompt(p, L) {
   p.text(0, top + 1, "\u2502", { fg: PROMPT.border });
   p.text(w - 1, top + 1, "\u2502", { fg: PROMPT.border });
   p.text(2, top + 1, "\u203A", { fg: PROMPT.glyph, bold: true });
-  p.text(5, top + 1, "Plant a request\u2026 (/ for commands, @ to mention files)", { fg: PROMPT.placeholder });
+  p.text(5, top + 1, "Type a request\u2026 (/ for commands, @ to mention files)", { fg: PROMPT.placeholder });
   p.text(0, top + 2, "\u2570" + "\u2500".repeat(w - 2) + "\u256F", { fg: PROMPT.border });
-  p.text(2, top + 3, "? /help for the almanac", { fg: PROMPT.status });
+  p.text(2, top + 3, "? /help for commands", { fg: PROMPT.status });
 }
 function paintWorld(L, s) {
   const p = background(L).clone();
@@ -2733,21 +2733,6 @@ var init_scene = __esm({
 
 // src/ui/theme.ts
 import chalk5 from "chalk";
-function farmDate(d = /* @__PURE__ */ new Date()) {
-  const seasons = [
-    { season: "Winter", icon: "\u2744" },
-    { season: "Spring", icon: "\u273F" },
-    { season: "Summer", icon: "\u2600" },
-    { season: "Fall", icon: "\u{1F342}" }
-  ];
-  const s = seasons[Math.floor((d.getMonth() + 1) % 12 / 3)];
-  return { ...s, day: Math.min(28, d.getDate()) };
-}
-function farmClock(d = /* @__PURE__ */ new Date()) {
-  const h = d.getHours();
-  const m = Math.floor(d.getMinutes() / 10) * 10;
-  return `${(h + 11) % 12 + 1}:${String(m).padStart(2, "0")}${h < 12 ? "am" : "pm"}`;
-}
 var C, paint, SPINNER_VERBS, SPINNER_FRAMES;
 var init_theme = __esm({
   "src/ui/theme.ts"() {
@@ -2782,28 +2767,24 @@ var init_theme = __esm({
       dim: chalk5.hex(C.dim)
     };
     SPINNER_VERBS = [
-      "Planting",
-      "Watering",
-      "Tilling",
-      "Foraging",
-      "Harvesting",
-      "Fishing for bugs",
-      "Mining for answers",
-      "Feeding the chickens",
+      "Thinking",
+      "Pondering",
+      "Purring",
+      "Tinkering",
       "Brewing coffee",
-      "Petting the dog",
-      "Chopping wood",
-      "Milking the cows",
-      "Picking parsnips",
-      "Fertilizing",
-      "Crafting",
-      "Smelting",
-      "Composting",
-      "Herding goats",
-      "Shearing sheep",
-      "Pickling",
-      "Sprinkling",
-      "Daydreaming by the river"
+      "Untangling yarn",
+      "Chasing bugs",
+      "Kneading the code",
+      "Sniffing around",
+      "Scheming",
+      "Doodling",
+      "Batting at bugs",
+      "Stretching",
+      "Mulling it over",
+      "Connecting the dots",
+      "Polishing",
+      "Napping on the keyboard",
+      "Chasing the cursor"
     ];
     SPINNER_FRAMES = ["\xB7", "\u2058", "\u2722", "\u273F", "\u2740", "\u273F", "\u2722", "\u2058"];
   }
@@ -2837,12 +2818,12 @@ var init_Cat = __esm({
     init_sprites();
     init_theme();
     CAT_LINES = {
-      greet: ["Mrrp! Ready when you are.", "Meow! Let\u2019s grow some code.", "*stretches* Hi, farmer!"],
+      greet: ["Mrrp! Ready when you are.", "Meow! Let\u2019s write some code.", "*stretches* Hi there!"],
       permission: ["Mrrow? Your call.", "*tilts head*", "Can I? Can I?"],
       plan: ["*sniffs the plan*", "Ooh, a plan!", "Purr\u2026 looks tasty."],
       allowed: ["*happy tail flick*", "Mrrp!", "On it!"],
       denied: ["*flattens ears*", "Okay\u2026 \u{1F63F}", "Fair enough."],
-      done: ["Purrr \u2713", "*slow blink*", "Harvest complete!", "Nap time? \u{1F4A4}"],
+      done: ["Purrr \u2713", "*slow blink*", "All done!", "Nap time? \u{1F4A4}"],
       error: ["Hss\u2026 that broke.", "*puffs up*", "Uh oh\u2026 \u{1F63F}"],
       interrupted: ["*freezes*", "Okay, stopping!", "*sits very still*"],
       pet: ["Purrrr \u2665", "*headbutts your hand*", "*slow blink* \u2665", "*rolls over*"]
@@ -2871,9 +2852,9 @@ function loadCustomCommands(cwd, skipped = []) {
   const home = os5.homedir();
   const dirs = [
     [path10.join(home, ".claude", "commands"), "user"],
-    [path10.join(home, ".raoncode", "commands"), "user"],
+    [path10.join(home, ".zoicode", "commands"), "user"],
     [path10.join(cwd, ".claude", "commands"), "project"],
-    [path10.join(cwd, ".raoncode", "commands"), "project"]
+    [path10.join(cwd, ".zoicode", "commands"), "project"]
   ];
   const found = /* @__PURE__ */ new Map();
   for (const [dir, source] of dirs) {
@@ -2949,17 +2930,17 @@ var init_commands = __esm({
     init_prompt();
     init_sessions();
     init_theme();
-    INIT_PROMPT = `Please analyze this codebase and create a RAONCODE.md file in the project root. It will be given to future coding agents working in this repository.
+    INIT_PROMPT = `Please analyze this codebase and create a ZOICODE.md file in the project root. It will be given to future coding agents working in this repository.
 
 Include:
 1. Commands to build, lint, test and run (including how to run a single test).
 2. High-level architecture: the big picture that takes reading several files to understand.
 
-Be concise. Do not list every file, and do not invent information that isn't in the repo. If a RAONCODE.md or CLAUDE.md exists, improve it instead. Also include important parts of README.md, .cursorrules or similar files. Start the file with:
+Be concise. Do not list every file, and do not invent information that isn't in the repo. If a ZOICODE.md or CLAUDE.md exists, improve it instead. Also include important parts of README.md, .cursorrules or similar files. Start the file with:
 
-# RAONCODE.md
+# ZOICODE.md
 
-This file provides guidance to Raoncode when working with code in this repository.`;
+This file provides guidance to Zoi Code when working with code in this repository.`;
     COMMANDS = [
       {
         name: "help",
@@ -2969,20 +2950,20 @@ This file provides guidance to Raoncode when working with code in this repositor
         run: (_a, api) => {
           const cmds = api.commands.map((c) => `  /${c.name.padEnd(12)} ${c.description}${c.source ? ` (${c.source})` : ""}`).join("\n");
           api.info(
-            `\u{1F33E} Farmer's Almanac
+            `Zoi Code help
 
 Commands
 ${cmds}
 
 Shortcuts
   !cmd         run a shell command directly
-  #note        save a note to RAONCODE.md
+  #note        save a note to ZOICODE.md
   @path        attach a file to your message
   \\ + enter    new line
   \u2191 / \u2193        prompt history
   shift+tab    cycle permission mode
   esc          interrupt Raon
-  ctrl+c \xD72    leave the farm`,
+  ctrl+c \xD72    quit`,
             C.parchment
           );
         }
@@ -2998,7 +2979,7 @@ Shortcuts
       },
       {
         name: "compact",
-        description: "Summarize the conversation to free up energy (context)",
+        description: "Summarize the conversation to free up context",
         run: (args, api) => api.compact(args)
       },
       {
@@ -3011,7 +2992,7 @@ Shortcuts
           const ctx = api.agent.contextTokens;
           const win = api.agent.llm.config.contextWindow;
           api.info(
-            `\u{1F4B0} Harvest report
+            `Token usage
   Input tokens:   ${u.promptTokens.toLocaleString()}
   Output tokens:  ${u.completionTokens.toLocaleString()}
   Context in use: ${ctx.toLocaleString()} / ${win.toLocaleString()} (${(ctx / win * 100).toFixed(1)}%)`,
@@ -3041,13 +3022,13 @@ Use /model <name> to switch.`,
       },
       {
         name: "init",
-        description: "Write a RAONCODE.md with notes about this project",
+        description: "Write a ZOICODE.md with notes about this project",
         run: (_a, api) => api.submit(INIT_PROMPT, "/init")
       },
       {
         name: "memory",
         whileBusy: true,
-        description: "Show loaded memory files (RAONCODE.md, CLAUDE.md)",
+        description: "Show loaded memory files (ZOICODE.md, CLAUDE.md)",
         run: (_a, api) => {
           const files = loadMemory(api.agent.cwd);
           api.info(
@@ -3089,18 +3070,18 @@ Read-only tools and safe commands (ls, cat, git status\u2026) never ask.`,
         whileBusy: true,
         description: "Save the conversation to a markdown file",
         run: (args, api) => {
-          const file = path10.resolve(api.agent.cwd, args.trim() || `raoncode-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}.md`);
-          const parts = [`# Raoncode conversation
+          const file = path10.resolve(api.agent.cwd, args.trim() || `zoicode-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}.md`);
+          const parts = [`# Zoi Code conversation
 
 ${(/* @__PURE__ */ new Date()).toLocaleString()} \xB7 ${api.agent.cwd}
 `];
           for (const m of api.agent.messages) {
             if (m.role === "user" && typeof m.content === "string") {
-              parts.push(`## \u{1F9D1}\u200D\u{1F33E} You
+              parts.push(`## You
 
 ${m.content.replace(/\n\n<system-reminder>[\s\S]*?<\/system-reminder>$/, "")}`);
             } else if (m.role === "assistant") {
-              if (typeof m.content === "string" && m.content.trim()) parts.push(`## \u{1F331} Raon
+              if (typeof m.content === "string" && m.content.trim()) parts.push(`## Raon
 
 ${m.content.trim()}`);
               for (const c of m.tool_calls ?? []) if ("function" in c) parts.push(`> \u{1F527} **${c.function.name}** \`${c.function.arguments.slice(0, 300)}\``);
@@ -3123,7 +3104,7 @@ ${m.content.trim()}`);
         name: "exit",
         whileBusy: true,
         aliases: ["quit", "bye"],
-        description: "Leave the farm",
+        description: "Quit",
         run: (_a, api) => api.exit()
       }
     ];
@@ -3330,7 +3311,7 @@ function ToolLine({ item, cwd }) {
       TOOL_ICONS[item.name] ?? "\u2699",
       " ",
       item.progress ? sanitize(item.progress) : "working\u2026"
-    ] }) : item.status === "denied" ? /* @__PURE__ */ jsx2(Text2, { color: C.stone, children: "  \u23BF  Denied by farmer" }) : r?.isError ? /* @__PURE__ */ jsx2(Result, { color: C.berry, children: preview(r.output, 6) }) : /* @__PURE__ */ jsxs2(Box2, { flexDirection: "column", paddingLeft: 2, children: [
+    ] }) : item.status === "denied" ? /* @__PURE__ */ jsx2(Text2, { color: C.stone, children: "  \u23BF  Denied" }) : r?.isError ? /* @__PURE__ */ jsx2(Result, { color: C.berry, children: preview(r.output, 6) }) : /* @__PURE__ */ jsxs2(Box2, { flexDirection: "column", paddingLeft: 2, children: [
       /* @__PURE__ */ jsxs2(Text2, { color: C.dim, wrap: "truncate-end", children: [
         "\u23BF  ",
         r?.summary ? sanitize(r.summary) : preview(r?.output ?? "", 1)
@@ -3357,7 +3338,7 @@ function MessageItem({ item, cwd }) {
       ] });
     case "thought":
       return /* @__PURE__ */ jsx2(Box2, { marginTop: 1, children: /* @__PURE__ */ jsxs2(Text2, { color: C.dim, italic: true, children: [
-        "\u273B Pondered by the pond for ",
+        "\u273B Thought for ",
         item.seconds,
         "s"
       ] }) });
@@ -3388,15 +3369,15 @@ var init_Messages = __esm({
     init_theme();
     TOOL_ICONS = {
       Read: "\u{1F4D6}",
-      Write: "\u{1F331}",
+      Write: "\u{1F4DD}",
       Edit: "\u270E",
-      Bash: "\u26CF",
+      Bash: "\u26A1",
       Glob: "\u{1F50D}",
       Grep: "\u{1F50D}",
       LS: "\u{1F5C2}",
       TodoWrite: "\u{1F4DC}",
       WebFetch: "\u{1F310}",
-      Task: "\u{1F41D}",
+      Task: "\u{1F9F6}",
       ExitPlanMode: "\u{1F4DC}"
     };
     columns = () => process.stdout.columns || 80;
@@ -3472,13 +3453,13 @@ function PermissionPrompt({
     else if (key.return) onAnswer(options[sel].answer);
     else if (/^[1-9]$/.test(ch) && Number(ch) <= n) onAnswer(options[Number(ch) - 1].answer);
   });
-  const title = tool.name === "Bash" ? "Bash command" : tool.name === "Write" ? "Plant a new file" : tool.name === "Edit" ? "Edit file" : tool.name === "WebFetch" ? "Fetch from the web" : tool.name;
+  const title = tool.name === "Bash" ? "Bash command" : tool.name === "Write" ? "Create file" : tool.name === "Edit" ? "Edit file" : tool.name === "WebFetch" ? "Fetch from the web" : tool.name;
   const abs = input.file_path ? resolvePath({ cwd }, String(input.file_path)) : "";
   const file = abs ? sanitize(displayPath({ cwd }, abs)) : "";
   const outside = abs && !isInsideDir(cwd, abs);
   return /* @__PURE__ */ jsxs3(Box3, { flexDirection: "column", borderStyle: "round", borderColor: C.gold, paddingX: 1, children: [
     /* @__PURE__ */ jsxs3(Text3, { color: C.gold, bold: true, children: [
-      "\u{1F414} ",
+      "\u{1F43E} ",
       title
     ] }),
     /* @__PURE__ */ jsx3(Box3, { marginY: 1, flexDirection: "column", paddingLeft: 2, children: tool.name === "Bash" ? /* @__PURE__ */ jsxs3(Fragment, { children: [
@@ -3521,7 +3502,7 @@ function PlanApproval({ plan, maxLines = 30, onAnswer }) {
   const lines = rendered.split("\n");
   const shown = lines.length <= budget ? rendered : [...lines.slice(0, budget - 1), `\u2026 ${lines.length - budget + 1} more lines (the full plan is above \u2191)`].join("\n");
   return /* @__PURE__ */ jsxs3(Box3, { flexDirection: "column", borderStyle: "round", borderColor: C.sky, paddingX: 1, children: [
-    /* @__PURE__ */ jsx3(Text3, { color: C.sky, bold: true, children: "\u{1F4DC} Raon's plan for the season" }),
+    /* @__PURE__ */ jsx3(Text3, { color: C.sky, bold: true, children: "\u{1F4DC} Raon's plan" }),
     /* @__PURE__ */ jsx3(Box3, { marginY: 1, paddingLeft: 1, children: /* @__PURE__ */ jsx3(Text3, { children: shown }) }),
     /* @__PURE__ */ jsx3(Text3, { color: C.parchment, children: "Would you like to proceed?" }),
     options.map((o, i) => /* @__PURE__ */ jsxs3(Text3, { color: i === sel ? C.gold : C.dim, children: [
@@ -3552,7 +3533,7 @@ import chalk7 from "chalk";
 import { jsx as jsx4, jsxs as jsxs4 } from "react/jsx-runtime";
 function modeOf(value) {
   if (value.startsWith("!")) return { glyph: "!", color: C.berry, hint: "bash mode" };
-  if (value.startsWith("#")) return { glyph: "#", color: C.purple, hint: "memory mode \xB7 saved to RAONCODE.md" };
+  if (value.startsWith("#")) return { glyph: "#", color: C.purple, hint: "memory mode \xB7 saved to ZOICODE.md" };
   if (value.startsWith("/")) return { glyph: "\u203A", color: C.sky, hint: "" };
   return { glyph: "\u203A", color: C.gold, hint: "" };
 }
@@ -3634,7 +3615,7 @@ function PromptInput({ active, history, suggestions, onSubmit, onKey }) {
       ] }),
       /* @__PURE__ */ jsx4(Box4, { flexGrow: 1, children: value ? /* @__PURE__ */ jsx4(Text4, { children: shown }) : /* @__PURE__ */ jsxs4(Text4, { color: C.dim, children: [
         active ? chalk7.inverse(" ") : "",
-        active ? "Plant a request\u2026 (/ for commands, @ to mention files)" : ""
+        active ? "Type a request\u2026 (/ for commands, @ to mention files)" : ""
       ] }) })
     ] }),
     mode.hint ? /* @__PURE__ */ jsx4(Box4, { paddingX: 2, children: /* @__PURE__ */ jsx4(Text4, { color: mode.color, children: mode.hint }) }) : null,
@@ -3716,14 +3697,14 @@ function safe(f) {
     return "";
   }
 }
-function EnergyBar({ used, total }) {
-  const left = Math.max(0, 1 - used / total);
-  const n = Math.round(left * 10);
-  const color = left > 0.5 ? C.grass : left > 0.2 ? C.gold : C.berry;
+function ContextMeter({ used, total }) {
+  const full = Math.min(1, Math.max(0, used / total));
+  const n = Math.round(full * 10);
+  const color = full < 0.5 ? C.grass : full < 0.8 ? C.gold : C.berry;
   return /* @__PURE__ */ jsxs5(Text5, { children: [
-    /* @__PURE__ */ jsx5(Text5, { color: C.gold, children: "\u26A1" }),
-    /* @__PURE__ */ jsx5(Text5, { color, children: "\u2588".repeat(n) }),
-    /* @__PURE__ */ jsx5(Text5, { color: C.woodDark, children: "\u2588".repeat(10 - n) })
+    /* @__PURE__ */ jsx5(Text5, { color: C.dim, children: "context " }),
+    /* @__PURE__ */ jsx5(Text5, { color, children: "\u25B0".repeat(n) }),
+    /* @__PURE__ */ jsx5(Text5, { color: C.woodDark, children: "\u25B1".repeat(10 - n) })
   ] });
 }
 function Spinner({ frame, verb, started, tokens }) {
@@ -3997,7 +3978,7 @@ function App({ agent, session: initialSession, initialPrompt, banner, makeBanner
       speak(pickLine(CAT_LINES.done), 5e3);
     }
     if (!exiting.current && agent.estimateContextTokens() > agent.llm.config.contextWindow * 0.85) {
-      info("\u{1F971} Energy is low \u2014 auto-compacting the conversation\u2026", C.gold);
+      info("The context is almost full: compacting the conversation\u2026", C.gold);
       await doCompact("");
     }
   }
@@ -4019,7 +4000,7 @@ function App({ agent, session: initialSession, initialPrompt, banner, makeBanner
     }
   }
   async function doCompact(instructions) {
-    const ac = beginWork("Composting old memories");
+    const ac = beginWork("Compacting the conversation");
     try {
       const summary = await agent.compact(instructions, ac.signal);
       if (ac.signal.aborted) {
@@ -4027,7 +4008,7 @@ function App({ agent, session: initialSession, initialPrompt, banner, makeBanner
         return;
       }
       resetScreen([
-        { kind: "info", id: uid(), text: "\u{1F342} Conversation composted. Summary:", color: C.gold },
+        { kind: "info", id: uid(), text: "Conversation compacted. Summary:", color: C.gold },
         { kind: "assistant", id: uid(), text: summary || "(empty)" }
       ]);
     } catch (e) {
@@ -4107,9 +4088,9 @@ function App({ agent, session: initialSession, initialPrompt, banner, makeBanner
     }
     if (raw.startsWith("#")) {
       const note = raw.slice(1).trim();
-      const file = path12.join(agent.cwd, "RAONCODE.md");
+      const file = path12.join(agent.cwd, "ZOICODE.md");
       try {
-        const prefix = fs11.existsSync(file) ? fs11.readFileSync(file, "utf8").endsWith("\n") ? "" : "\n" : "# RAONCODE.md\n\n";
+        const prefix = fs11.existsSync(file) ? fs11.readFileSync(file, "utf8").endsWith("\n") ? "" : "\n" : "# ZOICODE.md\n\n";
         fs11.appendFileSync(file, `${prefix}- ${note}
 `);
         agent.refreshSystemPrompt();
@@ -4157,7 +4138,6 @@ function App({ agent, session: initialSession, initialPrompt, banner, makeBanner
   const l = live.current;
   const rows = stdout.rows || 24;
   const cols = stdout.columns || 80;
-  const date = farmDate();
   const modeLabel = MODE_LABEL[mode] ?? MODE_LABEL.default;
   const prompting = !!(permission || planApproval);
   const petHeight = PET_ROWS;
@@ -4175,7 +4155,7 @@ function App({ agent, session: initialSession, initialPrompt, banner, makeBanner
   const reasoningTail = sanitize(l.reasoning.trim().split("\n").filter(Boolean).slice(-2).join(" ")).slice(-leftWidth + 10);
   const streaming = busy && l.text && textBudget >= 3 ? tail(bulleted(renderMarkdown(sanitize(l.text), leftWidth - 2), paint.grass("\u23FA "), leftWidth), leftWidth, textBudget) : "";
   const usage = (agent.totalUsage.promptTokens + agent.totalUsage.completionTokens).toLocaleString();
-  const left = exitArmed ? "Press Ctrl-C again to leave the farm" : modeLabel.text ? `${modeLabel.text} (shift+tab to cycle)` : busy ? "esc to interrupt \xB7 type to queue a message" : "? /help for the almanac";
+  const left = exitArmed ? "Press Ctrl-C again to quit" : modeLabel.text ? `${modeLabel.text} (shift+tab to cycle)` : busy ? "esc to interrupt \xB7 type to queue a message" : "? /help for commands";
   return /* @__PURE__ */ jsxs5(Box5, { flexDirection: "column", children: [
     /* @__PURE__ */ jsx5(Static, { items, children: (item) => /* @__PURE__ */ jsx5(Box5, { flexDirection: "column", children: /* @__PURE__ */ jsx5(MessageItem, { item, cwd: agent.cwd }) }, item.id) }, staticKey),
     /* @__PURE__ */ jsxs5(Box5, { flexDirection: "row", alignItems: "flex-end", children: [
@@ -4220,13 +4200,12 @@ function App({ agent, session: initialSession, initialPrompt, banner, makeBanner
     /* @__PURE__ */ jsxs5(Box5, { paddingX: 2, height: 1, children: [
       /* @__PURE__ */ jsx5(Box5, { flexGrow: 1, flexShrink: 1, children: /* @__PURE__ */ jsx5(Text5, { color: exitArmed ? C.berry : modeLabel.color, wrap: "truncate-end", children: left }) }),
       /* @__PURE__ */ jsx5(Box5, { flexShrink: 0, children: /* @__PURE__ */ jsxs5(Text5, { color: C.dim, children: [
-        cols >= 90 ? `${date.icon} ${date.season} ${date.day} \xB7 ${farmClock()}  ` : "",
-        /* @__PURE__ */ jsx5(EnergyBar, { used: agent.contextTokens, total: agent.llm.config.contextWindow }),
-        " ",
-        /* @__PURE__ */ jsxs5(Text5, { color: C.gold, children: [
+        /* @__PURE__ */ jsx5(ContextMeter, { used: agent.contextTokens, total: agent.llm.config.contextWindow }),
+        cols >= 90 ? /* @__PURE__ */ jsxs5(Text5, { color: C.dim, children: [
+          "  ",
           usage,
-          "g"
-        ] })
+          " tokens"
+        ] }) : null
       ] }) })
     ] })
   ] });
@@ -4255,7 +4234,7 @@ var init_App = __esm({
       default: { text: "", color: C.dim },
       acceptEdits: { text: "\u23F5\u23F5 auto-accept edits on", color: C.purple },
       plan: { text: "\u23F8 plan mode on", color: C.sky },
-      bypass: { text: "\u26A0 bypass permissions on \u2014 no fences on this farm", color: C.berry }
+      bypass: { text: "\u26A0 bypass permissions on: nothing asks first", color: C.berry }
     };
   }
 });
@@ -4277,7 +4256,7 @@ function infoLines(model, cwd, choice) {
     { text: mode, fg: "#F7C548", bold: true },
     { text: model, fg: "#B8F28C" },
     { text: folder, fg: "#F5DEB3" },
-    { text: "/help for the almanac", fg: "#E8C9A0" }
+    { text: "/help for commands", fg: "#E8C9A0" }
   ];
 }
 function compactBanner(model, cwd) {
@@ -4442,7 +4421,7 @@ async function startInteractive(opts) {
     const all = listSessions(cwd);
     if (!all.length) console.log(paint.dim("No saved sessions here yet; starting fresh."));
     else {
-      console.log(paint.gold("\u{1F4FC} Saved sessions \u2014 resume with raoncode -r <id>\n"));
+      console.log(paint.gold("\u{1F4FC} Saved sessions \u2014 resume with zoicode -r <id>\n"));
       for (const s of all.slice(0, 15)) {
         console.log(`  ${paint.gold(s.id)}  ${paint.dim(new Date(s.updatedAt).toLocaleString())}  ${s.title || "(untitled)"}`);
       }
@@ -4486,7 +4465,7 @@ async function startInteractive(opts) {
   await instance.waitUntilExit();
   const u = agent.totalUsage;
   console.log(
-    paint.gold("\n\u{1F319} The farmer goes to bed. ") + paint.dim(`Harvested ${(u.promptTokens + u.completionTokens).toLocaleString()} tokens.`) + (current.messages.length ? paint.dim(` Resume with: raoncode -r ${current.id}`) : "")
+    paint.gold("\n\u{1F43E} Bye! ") + paint.dim(`Used ${(u.promptTokens + u.completionTokens).toLocaleString()} tokens.`) + (current.messages.length ? paint.dim(` Resume with: zoicode -r ${current.id}`) : "")
   );
   process.exit(0);
 }
@@ -4616,7 +4595,7 @@ async function exitWhenFlushed(code) {
   await Promise.all([process.stdout, process.stderr].map((s) => new Promise((resolve) => s.write("", resolve))));
   process.exit(code);
 }
-var program = new Command().name("raoncode").description("Zoi Code: a cozy coding agent for your terminal, powered by Raon").version(VERSION).argument("[prompt...]", "initial prompt").option("-p, --print", "print the response and exit (non-interactive)").option("-m, --model <model>", "model to use").addOption(new Option("--output-format <format>", "with --print: output format").choices(OUTPUT_FORMATS2).default("text")).addOption(new Option("--permission-mode <mode>", "which tool calls run without asking").choices(PERMISSION_MODES).default("default")).option("--yolo", "skip all permission prompts (same as --permission-mode bypass)").option("-c, --continue", "continue the most recent session in this directory").option("-r, --resume [id]", "resume a session by id (without an id: list them)").option("--verbose", "show tool calls and reasoning in --print mode").option("--no-splash", "skip the opening scene").option("--setup", "enter or change your Raon API key").action(async (promptWords, opts) => {
+var program = new Command().name("zoicode").description("Zoi Code: a cozy coding agent for your terminal, powered by Raon").version(VERSION).argument("[prompt...]", "initial prompt").option("-p, --print", "print the response and exit (non-interactive)").option("-m, --model <model>", "model to use").addOption(new Option("--output-format <format>", "with --print: output format").choices(OUTPUT_FORMATS2).default("text")).addOption(new Option("--permission-mode <mode>", "which tool calls run without asking").choices(PERMISSION_MODES).default("default")).option("--yolo", "skip all permission prompts (same as --permission-mode bypass)").option("-c, --continue", "continue the most recent session in this directory").option("-r, --resume [id]", "resume a session by id (without an id: list them)").option("--verbose", "show tool calls and reasoning in --print mode").option("--no-splash", "skip the opening scene").option("--setup", "enter or change your Raon API key").action(async (promptWords, opts) => {
   const interactive = process.stdin.isTTY && !opts.print;
   if (opts.setup || interactive && !process.env.RAON_API_KEY?.trim()) {
     const { runSetup: runSetup2 } = await Promise.resolve().then(() => (init_setup(), setup_exports));
@@ -4630,7 +4609,7 @@ var program = new Command().name("raoncode").description("Zoi Code: a cozy codin
   if (opts.print) {
     const cwd = process.cwd();
     if (opts.resume === true && !opts.continue) {
-      console.error("--resume needs a session id with --print. Run raoncode -r to list the sessions here.");
+      console.error("--resume needs a session id with --print. Run zoicode -r to list the sessions here.");
       process.exit(1);
     }
     const session = resolveSession(cwd, !!opts.continue, opts.resume);
@@ -4643,7 +4622,7 @@ var program = new Command().name("raoncode").description("Zoi Code: a cozy codin
 
 ${stdin}` : stdin;
     if (!prompt.trim()) {
-      console.error('No prompt given. Usage: raoncode -p "your prompt"');
+      console.error('No prompt given. Usage: zoicode -p "your prompt"');
       process.exit(1);
     }
     const agent = new Agent({ llm, cwd, permissionMode });
