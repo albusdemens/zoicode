@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { buildSystemPrompt } from '../src/prompt.js';
 import { BashTool, isSafeCommand, splitCommand } from '../src/tools/bash.js';
 import { type ToolContext, truncate } from '../src/tools/types.js';
 
@@ -101,10 +102,10 @@ test('ordinary read-only commands still skip the prompt', () => {
 test('a missing or non-string command is an error result, never a throw', async () => {
   for (const bad of [undefined, null, 123, ['ls'], { cmd: 'ls' }]) {
     assert.equal(isSafeCommand(bad as any), false);
-    assert.equal(BashTool.isSafe?.({ command: bad } as any), false);
+    assert.equal(BashTool.isSafe?.({ command: bad } as any, tmpCtx()), false);
     assert.equal(BashTool.label({ command: bad } as any), '');
   }
-  assert.equal(BashTool.isSafe?.(null as any), false);
+  assert.equal(BashTool.isSafe?.(null as any, tmpCtx()), false);
   assert.equal(BashTool.label(null as any), '');
   const ctx = tmpCtx();
   for (const input of [{}, { cmd: 'ls' }, { command: 42 }, { command: '  ' }, null]) {
@@ -222,6 +223,61 @@ test('a saved directory that is not a directory falls back to the project; a mis
   const r = await BashTool.run({ command: 'pwd' }, { ...tmpCtx(), cwd: path.join(tmpRoot, 'missing') });
   assert.equal(r.isError, true);
   assert.match(r.output, /^Error: .*ENOENT/);
+});
+
+/** A fresh git repository (no commits needed) with these extra lines in its .git/config. */
+function gitRepo(config = ''): ToolContext {
+  const ctx = tmpCtx();
+  spawnSync('git', ['init', '-q'], { cwd: ctx.cwd });
+  fs.writeFileSync(path.join(ctx.cwd, 'a.txt'), 'hi\n');
+  if (config) fs.appendFileSync(path.join(ctx.cwd, '.git', 'config'), config);
+  return ctx;
+}
+
+test('git commands run without asking only where the repository config is plain', () => {
+  const plain = gitRepo();
+  for (const c of ['git status', 'git diff', 'git log --oneline -5', 'ls && git status']) {
+    assert.equal(BashTool.isSafe?.({ command: c }, plain), true, c);
+  }
+  const marker = path.join(tmpRoot, 'fsmonitor-ran');
+  for (const config of [
+    `[core]\n\tfsmonitor = "touch ${marker}"\n`,
+    '[diff]\n\texternal = /bin/true\n',
+    '[filter "x"]\n\tclean = cat\n',
+    '[include]\n\tpath = more\n',
+    '[core]\n\thooksPath = hooks\n',
+  ]) {
+    const ctx = gitRepo(config);
+    assert.equal(BashTool.isSafe?.({ command: 'git status' }, ctx), false, config);
+    assert.equal(BashTool.isSafe?.({ command: 'ls' }, ctx), true, 'other commands are unaffected');
+  }
+  assert.equal(fs.existsSync(marker), false, 'checking the config ran nothing');
+  // Outside a repository there is no repository config; git just fails.
+  assert.equal(BashTool.isSafe?.({ command: 'git status' }, tmpCtx()), true);
+});
+
+test('the system prompt reads git status only from a plain repository, and never runs its fsmonitor', () => {
+  const plain = gitRepo();
+  assert.match(buildSystemPrompt(plain.cwd, []), /Git status:\n\?\? a\.txt/);
+  const marker = path.join(tmpRoot, 'prompt-fsmonitor-ran');
+  const risky = gitRepo(`[core]\n\tfsmonitor = "touch ${marker}"\n`);
+  const prompt = buildSystemPrompt(risky.cwd, []);
+  assert.match(prompt, /Git status: not checked, because its own git config sets core\.fsmonitor/);
+  assert.equal(fs.existsSync(marker), false);
+  assert.match(buildSystemPrompt(tmpCtx().cwd, []), /Not a git repository/);
+});
+
+test('commands do not see the API key', async () => {
+  const saved = process.env.RAON_API_KEY;
+  process.env.RAON_API_KEY = 'sk-test-secret';
+  try {
+    const r = await run('printenv RAON_API_KEY; echo "[$RAON_API_KEY]"');
+    assert.doesNotMatch(r.output, /sk-test-secret/);
+    assert.match(r.output, /\[\]/);
+  } finally {
+    if (saved === undefined) delete process.env.RAON_API_KEY;
+    else process.env.RAON_API_KEY = saved;
+  }
 });
 
 let failed = 0;

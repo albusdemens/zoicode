@@ -153,7 +153,7 @@ export class Agent {
     if (tool.readOnly || this.permissionMode === 'bypass') return true;
     // Auto-accepted edits stay inside the project: a write anywhere else is asked about.
     if (this.permissionMode === 'acceptEdits' && EDIT_TOOLS.has(tool.name) && this.inProject(input.file_path)) return true;
-    if (tool.isSafe?.(input)) return true;
+    if (tool.isSafe?.(input, this.ctx)) return true;
     const rules = this.alwaysRules(tool, input);
     // A rule never covers a compound Bash command, nor a Write/Edit outside the project.
     const coverable = tool.name === 'Bash' ? isSimpleCommand(String(input.command)) : !EDIT_TOOLS.has(tool.name) || this.inProject(input.file_path);
@@ -228,7 +228,7 @@ export class Agent {
       };
     }
 
-    const allowedInPlan = tool.readOnly || tool.name === 'WebFetch' || (tool.name === 'Bash' && tool.isSafe?.(input));
+    const allowedInPlan = tool.readOnly || tool.name === 'WebFetch' || (tool.name === 'Bash' && tool.isSafe?.(input, this.ctx));
     if (this.permissionMode === 'plan' && !allowedInPlan) {
       return {
         result: {

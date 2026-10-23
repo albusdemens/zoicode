@@ -5,7 +5,8 @@ import type { Socket } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
-import type { Tool } from './types.js';
+import { QUIET_GIT_ENV, riskyGitConfig } from './git.js';
+import type { Tool, ToolContext } from './types.js';
 
 // Programs that only read. Anything that can write files or run other programs
 // (env, xargs, tree -o, uniq OUT, ...) is deliberately left out.
@@ -111,6 +112,22 @@ export function isSafeCommand(command: string): boolean {
   });
 }
 
+/** Whether any of the simple commands runs git (they are only "safe" in a repository with a plain config, see git.ts). */
+function runsGit(command: string): boolean {
+  return !!splitCommand(command)?.some(({ words }) => words[0] === 'git');
+}
+
+/** Where the shell is: commands run where the last `cd` left it. */
+function shellCwd(ctx: ToolContext): string {
+  return (ctx.state.bashCwd as string | undefined) ?? ctx.cwd;
+}
+
+/** The environment for commands: no pagers, and not the API key, which Raon has no use for. */
+function childEnv(): NodeJS.ProcessEnv {
+  const { RAON_API_KEY: _key, ...env } = process.env;
+  return { ...env, ...QUIET_GIT_ENV, TERM: 'dumb', PAGER: 'cat', GIT_PAGER: 'cat' };
+}
+
 export const BashTool: Tool<{ command: string; timeout?: number; description?: string }> = {
   name: 'Bash',
   description:
@@ -128,13 +145,13 @@ export const BashTool: Tool<{ command: string; timeout?: number; description?: s
   },
   readOnly: false,
   label: i => (typeof i?.command === 'string' ? i.command : ''),
-  isSafe: i => isSafeCommand(i?.command),
+  isSafe: (i, ctx) => isSafeCommand(i?.command) && (!runsGit(i.command) || riskyGitConfig(shellCwd(ctx))?.length === 0),
   run(input, ctx) {
     const command = input?.command;
     if (typeof command !== 'string' || !command.trim()) {
       return Promise.resolve({ output: 'Error: the "command" parameter must be a non-empty string', isError: true });
     }
-    const cwd = (ctx.state.bashCwd as string | undefined) ?? ctx.cwd;
+    const cwd = shellCwd(ctx);
     const cwdFile = newCwdFile();
     const script = cwdFile ? `${command}\n__rc=$?\npwd -P > ${shellQuote(cwdFile)}\nexit $__rc` : command;
     const timeout = Math.min(Number(input.timeout) > 0 ? Number(input.timeout) : 120_000, 600_000);
@@ -144,7 +161,7 @@ export const BashTool: Tool<{ command: string; timeout?: number; description?: s
       try {
         child = spawn('bash', ['-c', script], {
           cwd: isDirectory(cwd) ? cwd : ctx.cwd,
-          env: { ...process.env, TERM: 'dumb', PAGER: 'cat', GIT_PAGER: 'cat' },
+          env: childEnv(),
           stdio: ['ignore', 'pipe', 'pipe'],
           detached: true,
         });

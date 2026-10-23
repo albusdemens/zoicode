@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { CONFIG_DIR } from './config.js';
+import { currentBranch, findGitDir, QUIET_GIT_ENV, riskyGitConfig } from './tools/git.js';
 
 export const MEMORY_FILES = ['ZOICODE.md', 'CLAUDE.md'];
 
@@ -30,13 +31,26 @@ export function loadMemory(cwd: string): MemoryFile[] {
 }
 
 function gitInfo(cwd: string): string {
+  const gitDir = findGitDir(cwd);
+  if (!gitDir) return 'Not a git repository'; // and no git process, which on a Mac without developer tools pops up an installer
+  const branch = currentBranch(gitDir) ?? '(unknown)';
+  const risky = riskyGitConfig(cwd);
+  if (!risky || risky.length) {
+    const why = risky ? `its own git config sets ${risky.slice(0, 5).map(k => k.slice(0, 60)).join(', ')}` : 'git could not read its config';
+    return `Git branch: ${branch}\nGit status: not checked, because ${why}, which can make git run other programs. Git commands here need the user's approval.`;
+  }
   try {
-    const run = (c: string) => execSync(c, { cwd, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
-    const branch = run('git rev-parse --abbrev-ref HEAD');
-    const status = run('git status --short | head -20');
-    return `Git branch: ${branch}\nGit status:\n${status || '(clean)'}`;
+    const status = execFileSync('git', ['status', '--short'], {
+      cwd,
+      env: { ...process.env, ...QUIET_GIT_ENV },
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5000,
+    }).toString().trimEnd();
+    const lines = status.split('\n');
+    const shown = lines.slice(0, 20).join('\n') + (lines.length > 20 ? `\n… ${lines.length - 20} more` : '');
+    return `Git branch: ${branch}\nGit status:\n${status ? shown : '(clean)'}`;
   } catch {
-    return 'Not a git repository';
+    return `Git branch: ${branch}`;
   }
 }
 

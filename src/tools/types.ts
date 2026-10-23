@@ -34,7 +34,7 @@ export interface Tool<I = any> {
   /** Short human label for the call, e.g. the file path or command. */
   label(input: I): string;
   /** Optional check that lets e.g. safe bash commands skip the prompt. */
-  isSafe?(input: I): boolean;
+  isSafe?(input: I, ctx: ToolContext): boolean;
   run(input: I, ctx: ToolContext): Promise<ToolResult>;
 }
 
