@@ -135,12 +135,15 @@ Zoi Code keeps its files in `~/.raoncode/`:
 ## Development
 
 ```sh
-npm install          # dependencies, and builds dist/
+npm install          # dependencies
 npm run dev          # run from source with tsx
 npm run build        # bundle src/ into dist/cli.js with esbuild
 npm run typecheck
 npm test             # unit and integration tests
 ```
+
+`dist/cli.js` is committed, so `npm install -g github:albusdemens/zoicode` works without a build step
+on the user's machine: run `npm run build` before committing changes to `src/`.
 
 It is written in TypeScript with [Ink](https://github.com/vadimdemedes/ink) (React for the
 terminal), like Claude Code, and talks to Raon through the OpenAI SDK.

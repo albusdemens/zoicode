@@ -30,6 +30,6 @@ Everything else is in the [guide](docs/GUIDE.md).
 
 ```sh
 git clone https://github.com/albusdemens/zoicode.git && cd zoicode
-npm install && npm link    # builds, then puts raoncode on your PATH
+npm install && npm run build && npm link    # puts raoncode on your PATH
 npm test
 ```

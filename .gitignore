@@ -1,5 +1,4 @@
 node_modules/
-dist/
 *.tgz
 .env
 __pycache__/
