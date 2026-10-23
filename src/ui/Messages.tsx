@@ -87,7 +87,7 @@ export function ToolLine({ item, cwd }: { item: Extract<Item, { kind: 'tool' }>;
       <Text wrap="truncate-end">
         <Text color={dot}>⏺ </Text>
         <Text bold color={C.parchment}>
-          {item.name}
+          {sanitize(item.name)}
         </Text>
         <Text color={C.dim}>({shortLabel(item.label, cwd)})</Text>
       </Text>
@@ -177,7 +177,7 @@ export function MessageItem({ item, cwd }: { item: Item; cwd: string }) {
     case 'info':
       return (
         <Box marginTop={1} paddingLeft={2}>
-          <Text color={item.color ?? C.dim}>{item.text}</Text>
+          <Text color={item.color ?? C.dim}>{sanitize(item.text)}</Text>
         </Box>
       );
     default:

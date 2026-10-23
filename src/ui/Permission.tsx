@@ -6,7 +6,7 @@ import { applyEdit, makeDiff } from '../tools/files.js';
 import type { Tool } from '../tools/index.js';
 import { displayPath, isInsideDir, resolvePath } from '../tools/types.js';
 import { renderDiff, renderMarkdown } from './markdown.js';
-import { sanitize } from './sanitize.js';
+import { sanitize, sanitizeStrict } from './sanitize.js';
 import { C } from './theme.js';
 
 /** Lines the prompt chrome takes besides its content: border, title, spacing, question and 3 options. */
@@ -76,7 +76,7 @@ export function PermissionPrompt({
   const armed = useArmed();
   const budget = Math.max(3, maxLines - CHROME_LINES);
   const diff = useMemo(() => previewDiff(tool, input, cwd, Math.max(2, budget - 1)), [tool, input, cwd, budget]);
-  const command = sanitize(String(input.command ?? ''));
+  const command = sanitizeStrict(String(input.command ?? ''));
   // "Don't ask again" is only offered when the agent would store a rule for it, and its label
   // says what that rule covers: Bash(git commit) covers plain `git commit` commands (see bashRule).
   const ruleLabel = (rule: string) => {
@@ -118,7 +118,7 @@ export function PermissionPrompt({
   // Read and Edit name a file; LS, Glob and Grep a folder (when they ask, it is a credential folder).
   const target = input.file_path ?? input.path;
   const abs = target ? resolvePath({ cwd }, String(target)) : '';
-  const file = abs ? sanitize(displayPath({ cwd }, abs)) : '';
+  const file = abs ? sanitizeStrict(displayPath({ cwd }, abs)) : '';
   const outside = abs && !isInsideDir(cwd, abs);
 
   return (
@@ -130,10 +130,10 @@ export function PermissionPrompt({
         {tool.name === 'Bash' ? (
           <>
             <Text color={C.parchment}>{clip(command, budget - (input.description ? 1 : 0))}</Text>
-            {input.description ? <Text color={C.dim} wrap="truncate-end">{sanitize(String(input.description))}</Text> : null}
+            {input.description ? <Text color={C.dim} wrap="truncate-end">{sanitizeStrict(String(input.description))}</Text> : null}
           </>
         ) : tool.name === 'WebFetch' ? (
-          <Text color={C.sky}>{clip(sanitize(String(input.url ?? '')), budget)}</Text>
+          <Text color={C.sky}>{clip(sanitizeStrict(String(input.url ?? '')), budget)}</Text>
         ) : (
           <>
             <Text color={C.parchment} wrap="truncate-end">
@@ -142,7 +142,7 @@ export function PermissionPrompt({
             </Text>
             {tool.name === 'Glob' || tool.name === 'Grep' ? (
               <Text color={C.dim} wrap="truncate-end">
-                {sanitize(String(input.glob ?? input.pattern ?? ''))}
+                {sanitizeStrict(String(input.glob ?? input.pattern ?? ''))}
               </Text>
             ) : null}
             {diff ? <Text>{diff}</Text> : null}

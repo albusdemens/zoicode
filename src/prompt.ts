@@ -12,13 +12,26 @@ export interface MemoryFile {
   content: string;
 }
 
+/** The most read from one memory file: they come with a project, and all of it goes into every request. */
+const MAX_MEMORY_BYTES = 256 * 1024;
+
 /** Memory files: ~/.zoicode/ZOICODE.md, then every ZOICODE.md/CLAUDE.md from the filesystem root down to cwd. */
 export function loadMemory(cwd: string): MemoryFile[] {
   const found: MemoryFile[] = [];
   const add = (p: string) => {
+    let fd: number | undefined;
     try {
-      found.push({ path: p, content: fs.readFileSync(p, 'utf8') });
-    } catch { /* missing */ }
+      if (!fs.statSync(p).isFile()) return;
+      fd = fs.openSync(p, 'r');
+      const buf = Buffer.alloc(MAX_MEMORY_BYTES + 1);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      const content = buf.subarray(0, Math.min(n, MAX_MEMORY_BYTES)).toString('utf8');
+      found.push({ path: p, content: n > MAX_MEMORY_BYTES ? `${content}\n\n(cut: only the first 256 KB of this file is loaded)` : content });
+    } catch {
+      /* missing or unreadable */
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd);
+    }
   };
   add(path.join(CONFIG_DIR, 'ZOICODE.md'));
   const dirs: string[] = [];
@@ -34,13 +47,14 @@ function gitInfo(cwd: string): string {
   const gitDir = findGitDir(cwd);
   if (!gitDir) return 'Not a git repository'; // and no git process, which on a Mac without developer tools pops up an installer
   const branch = currentBranch(gitDir) ?? '(unknown)';
-  const risky = riskyGitConfig(cwd);
+  // Submodules don't matter here: the status below doesn't look inside them.
+  const risky = riskyGitConfig(cwd)?.filter(k => k !== 'submodules');
   if (!risky || risky.length) {
     const why = risky ? `its own git config sets ${risky.slice(0, 5).map(k => k.slice(0, 60)).join(', ')}` : 'git could not read its config';
     return `Git branch: ${branch}\nGit status: not checked, because ${why}, which can make git run other programs. Git commands here need the user's approval.`;
   }
   try {
-    const status = execFileSync('git', ['status', '--short'], {
+    const status = execFileSync('git', ['status', '--short', '--ignore-submodules=all'], {
       cwd,
       env: { ...process.env, ...QUIET_GIT_ENV },
       stdio: ['ignore', 'pipe', 'ignore'],

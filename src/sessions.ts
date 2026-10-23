@@ -22,16 +22,30 @@ export function newSession(cwd: string): Session {
   return { id: crypto.randomUUID().slice(0, 8), cwd, createdAt: now, updatedAt: now, title: '', messages: [] };
 }
 
+/** Folders whose session files were already made private in this run (see saveSession). */
+const tightened = new Set<string>();
+
 export function saveSession(s: Session) {
   if (!s.messages.length) return;
   const dir = projectDir(s.cwd);
-  fs.mkdirSync(dir, { recursive: true });
+  // A session holds whatever the model read, so only the user may read it, like the key in .env.
+  for (const d of [CONFIG_DIR, path.dirname(dir), dir]) {
+    fs.mkdirSync(d, { recursive: true, mode: 0o700 });
+    fs.chmodSync(d, 0o700);
+  }
+  if (!tightened.has(dir)) {
+    tightened.add(dir);
+    // Files saved by older versions were readable by everyone.
+    for (const f of fs.readdirSync(dir)) if (f.endsWith('.json')) fs.chmodSync(path.join(dir, f), 0o600);
+  }
   s.updatedAt = new Date().toISOString();
   if (!s.title) {
     const first = s.messages.find(m => m.role === 'user' && typeof m.content === 'string');
     s.title = String(first?.content ?? '').split('\n')[0].slice(0, 80);
   }
-  fs.writeFileSync(path.join(dir, `${s.id}.json`), JSON.stringify(s));
+  const file = path.join(dir, `${s.id}.json`);
+  fs.writeFileSync(file, JSON.stringify(s), { mode: 0o600 });
+  fs.chmodSync(file, 0o600); // the mode above only applies to a new file
 }
 
 export function listSessions(cwd: string): Session[] {

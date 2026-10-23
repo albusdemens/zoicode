@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { Agent } from '../agent.js';
 import { loadMemory } from '../prompt.js';
 import { listSessions } from '../sessions.js';
+import { sanitize } from './sanitize.js';
 import { C } from './theme.js';
 
 export interface CommandApi {
@@ -263,7 +264,7 @@ export function loadCustomCommands(cwd: string, skipped: string[] = []): Command
       found.set(name, {
         name,
         source,
-        description: (meta.description || firstLine || 'Custom command').slice(0, 60),
+        description: sanitize(meta.description || firstLine || 'Custom command').slice(0, 60),
         run: (args, api) => {
           const prompt = body.includes('$ARGUMENTS')
             ? body.replaceAll('$ARGUMENTS', args)

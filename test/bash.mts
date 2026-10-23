@@ -280,6 +280,18 @@ test('commands do not see the API key', async () => {
   }
 });
 
+test('a repository with submodules asks before git runs, and the system prompt still shows its status', () => {
+  const ctx = gitRepo();
+  fs.writeFileSync(path.join(ctx.cwd, '.gitmodules'), '[submodule "lib"]\n\tpath = lib\n\turl = ../lib\n');
+  assert.equal(BashTool.isSafe?.({ command: 'git status' }, ctx), false);
+  assert.match(buildSystemPrompt(ctx.cwd, []), /Git status:\n.*\?\? \.gitmodules/s);
+});
+
+test('printenv is no longer a command that runs without asking', () => {
+  assert.equal(BashTool.isSafe?.({ command: 'printenv' }, tmpCtx()), false);
+  assert.equal(BashTool.isSafe?.({ command: 'ls' }, tmpCtx()), true);
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try {

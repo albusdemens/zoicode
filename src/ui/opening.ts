@@ -1,6 +1,7 @@
 import { Paint } from './canvas.js';
 import { catJourney, fidget, JOURNEY_MS } from './catAnim.js';
 import { renderBanner, renderScene, sceneLayout, type InfoLine, type Layout, type MenuItem } from './scene.js';
+import { sanitize } from './sanitize.js';
 import { logo, sheetGrid } from './sprites/index.js';
 
 export type OpeningChoice = 'new' | 'continue' | 'plan' | 'build';
@@ -21,8 +22,8 @@ export function infoLines(model: string, cwd: string, choice: OpeningChoice): In
   const mode = choice === 'plan' ? '⏸ Plan Studio' : choice === 'build' ? '⏵⏵ Build Studio' : choice === 'continue' ? '↺ Continuing' : '✿ New session';
   return [
     { text: mode, fg: '#F7C548', bold: true },
-    { text: model, fg: '#B8F28C' },
-    { text: folder, fg: '#F5DEB3' },
+    { text: sanitize(model), fg: '#B8F28C' },
+    { text: sanitize(folder), fg: '#F5DEB3' },
     { text: '/help for commands', fg: '#E8C9A0' },
   ];
 }

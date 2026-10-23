@@ -21,11 +21,26 @@ export type StreamEvent =
   // finishReason is '' when the stream ended without one: the reply may be cut off.
   | { type: 'done'; text: string; reasoning: string; toolCalls: ToolCall[]; usage?: Usage; finishReason: string };
 
+/** The most tool calls taken from one reply, and the most argument text per call (a big file for Write fits). */
+const MAX_TOOL_CALLS = 128;
+const MAX_ARGUMENT_CHARS = 20_000_000;
+
 export class LLM {
   private client: OpenAI;
 
   constructor(public config: Config) {
-    this.client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL, maxRetries: 3 });
+    // The SDK adds OPENAI_* settings from the environment (organization, project, admin key, custom
+    // headers) to every request. They belong to the user's OpenAI setup, not to the Raon endpoint.
+    // The custom headers are read while the client is built, so they are hidden just for that.
+    const customHeaders = process.env.OPENAI_CUSTOM_HEADERS;
+    delete process.env.OPENAI_CUSTOM_HEADERS;
+    try {
+      this.client = new OpenAI({
+        apiKey: config.apiKey, baseURL: config.baseURL, maxRetries: 3, organization: null, project: null, adminAPIKey: null,
+      });
+    } finally {
+      if (customHeaders !== undefined) process.env.OPENAI_CUSTOM_HEADERS = customHeaders;
+    }
   }
 
   async listModels(): Promise<string[]> {
@@ -69,13 +84,17 @@ export class LLM {
         yield { type: 'text', delta: delta.content };
       }
       for (const tc of delta.tool_calls ?? []) {
-        let call = calls[tc.index];
+        // The endpoint is not trusted: its index is used only when it is a small count (a huge one
+        // stalled the app, "__proto__" reached Array.prototype), and names and arguments are capped.
+        const i = tc.index;
+        if (!Number.isInteger(i) || i < 0 || i >= MAX_TOOL_CALLS) continue;
+        let call = calls[i];
         if (!call) {
-          call = calls[tc.index] = { id: tc.id ?? `call_${tc.index}`, name: '', arguments: '' };
+          call = calls[i] = { id: typeof tc.id === 'string' ? tc.id : `call_${i}`, name: '', arguments: '' };
         }
-        if (tc.id) call.id = tc.id;
-        if (tc.function?.name) call.name += tc.function.name;
-        if (tc.function?.arguments) call.arguments += tc.function.arguments;
+        if (typeof tc.id === 'string' && tc.id) call.id = tc.id.slice(0, 200);
+        if (typeof tc.function?.name === 'string') call.name = (call.name + tc.function.name).slice(0, 200);
+        if (typeof tc.function?.arguments === 'string' && call.arguments.length < MAX_ARGUMENT_CHARS) call.arguments += tc.function.arguments;
       }
       if (choice.finish_reason) finishReason = choice.finish_reason;
     }

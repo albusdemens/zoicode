@@ -37,8 +37,9 @@ export function findGitDir(dir: string): string | undefined {
 
 /**
  * The settings in the repository's own config (local and worktree, includes followed) that are not
- * known to be harmless. Empty means git can run here without asking; undefined means git could not
- * read the config (git missing, a broken repository), which is treated like a risky one.
+ * known to be harmless, plus "submodules" when it has any: each submodule has a config of its own,
+ * which git status and friends use too. Empty means git can run here without asking; undefined means
+ * git could not read the config (git missing, a broken repository), which is treated like a risky one.
  */
 export function riskyGitConfig(cwd: string): string[] | undefined {
   let out: string;
@@ -54,11 +55,27 @@ export function riskyGitConfig(cwd: string): string[] | undefined {
   }
   const fields = out.split('\0');
   const risky = new Set<string>();
+  if (hasSubmodules(cwd)) risky.add('submodules');
   for (let i = 0; i + 1 < fields.length; i += 2) {
     const [scope, key] = [fields[i], fields[i + 1].split('\n')[0].toLowerCase()];
     if ((scope === 'local' || scope === 'worktree') && !PLAIN_KEYS.some(p => p.test(key))) risky.add(key);
   }
   return [...risky];
+}
+
+/** Whether the repository cwd is in has submodules (a .gitmodules file, or modules in its git folder). */
+function hasSubmodules(cwd: string): boolean {
+  const gitDir = findGitDir(cwd);
+  if (!gitDir) return false;
+  if (fs.existsSync(path.join(path.dirname(gitDir), '.gitmodules'))) return true;
+  try {
+    const dir = fs.statSync(gitDir).isFile()
+      ? path.resolve(path.dirname(gitDir), /^gitdir: (.+)$/m.exec(fs.readFileSync(gitDir, 'utf8'))?.[1].trim() ?? '.')
+      : gitDir;
+    return fs.existsSync(path.join(dir, 'modules'));
+  } catch {
+    return true;
+  }
 }
 
 /** The branch HEAD points at, read from the files so no git command runs, or undefined. */

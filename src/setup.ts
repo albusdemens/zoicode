@@ -3,6 +3,7 @@ import path from 'node:path';
 import chalk from 'chalk';
 import { CONFIG_DIR, envSource, loadConfig, parseDotEnvLine } from './config.js';
 import { LLM } from './llm.js';
+import { sanitize } from './ui/sanitize.js';
 
 const gold = chalk.hex('#F7C548');
 const dim = chalk.hex('#8C7A6B');
@@ -97,7 +98,7 @@ async function checkAndSave(key: string): Promise<boolean> {
   try {
     models = await llm.listModels();
   } catch (e) {
-    console.log(berry(`✗ ${(e as Error).message}`));
+    console.log(berry(`✗ ${sanitize((e as Error).message)}`));
     return false;
   }
   console.log(grass(`✓ works! (${models.length} model${models.length === 1 ? '' : 's'} available)`));
@@ -108,7 +109,7 @@ async function checkAndSave(key: string): Promise<boolean> {
   try {
     file = saveCredentials({ RAON_API_KEY: key });
   } catch (e) {
-    console.log(berry(`⚠ The key works but could not be saved: ${(e as Error).message}`));
+    console.log(berry(`⚠ The key works but could not be saved: ${sanitize((e as Error).message)}`));
     console.log(dim('It is used for this run only. Export RAON_API_KEY to keep it.\n'));
     return true;
   }

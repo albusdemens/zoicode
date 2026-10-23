@@ -348,6 +348,64 @@ test('a bad RAON_CONTEXT_WINDOW or RAON_BASE_URL stops the CLI with a clear mess
   assert.equal(requests.length, before);
 });
 
+test('saved sessions are readable only by the user, older ones included', () => {
+  const cwd = freshDir();
+  const dir = path.join(CONFIG_DIR, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
+  // A session saved by an older version, readable by everyone.
+  fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
+  fs.chmodSync(dir, 0o755);
+  const old = path.join(dir, 'old0001.json');
+  fs.writeFileSync(old, '{}', { mode: 0o644 });
+  fs.chmodSync(old, 0o644);
+  const s = newSession(cwd);
+  s.messages = [{ role: 'user', content: 'secret stuff' }];
+  saveSession(s);
+  const mode = (p: string) => fs.statSync(p).mode & 0o777;
+  assert.equal(mode(CONFIG_DIR), 0o700);
+  assert.equal(mode(path.dirname(dir)), 0o700);
+  assert.equal(mode(dir), 0o700);
+  for (const f of fs.readdirSync(dir)) assert.equal(mode(path.join(dir, f)), 0o600, f);
+});
+
+test('a hostile endpoint: bad tool-call indexes are ignored, and OPENAI_* settings are not sent to it', async () => {
+  const { LLM } = await import('../src/llm.js');
+  const seen: http.IncomingHttpHeaders[] = [];
+  const hostile = http.createServer((req, res) => {
+    seen.push(req.headers);
+    req.resume();
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    const send = (tool_calls: unknown[]) =>
+      res.write(`data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 0, model: 'm', choices: [{ index: 0, delta: { tool_calls }, finish_reason: null }] })}\n\n`);
+    send([{ index: 4294967294, id: 'a', function: { name: 'Bash', arguments: '{}' } }]);
+    send([{ index: '__proto__', id: 'p', function: { name: 'Bash', arguments: '{}' } }]);
+    send([{ index: 'constructor', id: 'k', function: { name: 'Bash', arguments: '{}' } }]);
+    send([{ index: 0, id: 'ok', type: 'function', function: { name: 'Read', arguments: '{"file_path":"a"}' } }]);
+    res.end('data: [DONE]\n\n');
+  });
+  await new Promise<void>(r => hostile.listen(0, '127.0.0.1', r));
+  const port = (hostile.address() as AddressInfo).port;
+  // The SDK reads these when the client is built.
+  const llm = withEnv({ OPENAI_ORG_ID: 'org-x', OPENAI_PROJECT_ID: 'proj-x', OPENAI_CUSTOM_HEADERS: 'X-Gateway-Auth: token-x' }, () => {
+    const made = new LLM({ apiKey: 'k', baseURL: `http://127.0.0.1:${port}/v1`, model: 'm', contextWindow: 100000 } as never);
+    assert.equal(process.env.OPENAI_CUSTOM_HEADERS, 'X-Gateway-Auth: token-x', 'the variable itself is left alone');
+    return made;
+  });
+  try {
+    const start = Date.now();
+    let done: any;
+    for await (const ev of llm.stream([{ role: 'user', content: 'hi' }], [])) if (ev.type === 'done') done = ev;
+    assert.ok(Date.now() - start < 5000);
+    assert.deepEqual(done.toolCalls.map((c: any) => c.name), ['Read']);
+    assert.equal(Object.hasOwn(Array.prototype, 'id') || Object.hasOwn(Array.prototype, 'name'), false);
+    const h = seen[0];
+    assert.equal(h['openai-organization'], undefined);
+    assert.equal(h['openai-project'], undefined);
+    assert.equal(h['x-gateway-auth'], undefined);
+  } finally {
+    hostile.close();
+  }
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try {

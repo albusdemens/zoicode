@@ -81,14 +81,29 @@ var init_config = __esm({
 
 // src/llm.ts
 import OpenAI from "openai";
-var LLM;
+var MAX_TOOL_CALLS, MAX_ARGUMENT_CHARS, LLM;
 var init_llm = __esm({
   "src/llm.ts"() {
     "use strict";
+    MAX_TOOL_CALLS = 128;
+    MAX_ARGUMENT_CHARS = 2e7;
     LLM = class {
       constructor(config) {
         this.config = config;
-        this.client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL, maxRetries: 3 });
+        const customHeaders = process.env.OPENAI_CUSTOM_HEADERS;
+        delete process.env.OPENAI_CUSTOM_HEADERS;
+        try {
+          this.client = new OpenAI({
+            apiKey: config.apiKey,
+            baseURL: config.baseURL,
+            maxRetries: 3,
+            organization: null,
+            project: null,
+            adminAPIKey: null
+          });
+        } finally {
+          if (customHeaders !== void 0) process.env.OPENAI_CUSTOM_HEADERS = customHeaders;
+        }
       }
       config;
       client;
@@ -130,13 +145,15 @@ var init_llm = __esm({
             yield { type: "text", delta: delta.content };
           }
           for (const tc of delta.tool_calls ?? []) {
-            let call = calls[tc.index];
+            const i = tc.index;
+            if (!Number.isInteger(i) || i < 0 || i >= MAX_TOOL_CALLS) continue;
+            let call = calls[i];
             if (!call) {
-              call = calls[tc.index] = { id: tc.id ?? `call_${tc.index}`, name: "", arguments: "" };
+              call = calls[i] = { id: typeof tc.id === "string" ? tc.id : `call_${i}`, name: "", arguments: "" };
             }
-            if (tc.id) call.id = tc.id;
-            if (tc.function?.name) call.name += tc.function.name;
-            if (tc.function?.arguments) call.arguments += tc.function.arguments;
+            if (typeof tc.id === "string" && tc.id) call.id = tc.id.slice(0, 200);
+            if (typeof tc.function?.name === "string") call.name = (call.name + tc.function.name).slice(0, 200);
+            if (typeof tc.function?.arguments === "string" && call.arguments.length < MAX_ARGUMENT_CHARS) call.arguments += tc.function.arguments;
           }
           if (choice.finish_reason) finishReason = choice.finish_reason;
         }
@@ -172,11 +189,23 @@ function riskyGitConfig(cwd) {
   }
   const fields = out.split("\0");
   const risky = /* @__PURE__ */ new Set();
+  if (hasSubmodules(cwd)) risky.add("submodules");
   for (let i = 0; i + 1 < fields.length; i += 2) {
     const [scope, key] = [fields[i], fields[i + 1].split("\n")[0].toLowerCase()];
     if ((scope === "local" || scope === "worktree") && !PLAIN_KEYS.some((p) => p.test(key))) risky.add(key);
   }
   return [...risky];
+}
+function hasSubmodules(cwd) {
+  const gitDir = findGitDir(cwd);
+  if (!gitDir) return false;
+  if (fs2.existsSync(path2.join(path2.dirname(gitDir), ".gitmodules"))) return true;
+  try {
+    const dir = fs2.statSync(gitDir).isFile() ? path2.resolve(path2.dirname(gitDir), /^gitdir: (.+)$/m.exec(fs2.readFileSync(gitDir, "utf8"))?.[1].trim() ?? ".") : gitDir;
+    return fs2.existsSync(path2.join(dir, "modules"));
+  } catch {
+    return true;
+  }
 }
 function currentBranch(gitDir) {
   try {
@@ -221,9 +250,19 @@ import { execFileSync as execFileSync2 } from "node:child_process";
 function loadMemory(cwd) {
   const found = [];
   const add = (p) => {
+    let fd;
     try {
-      found.push({ path: p, content: fs3.readFileSync(p, "utf8") });
+      if (!fs3.statSync(p).isFile()) return;
+      fd = fs3.openSync(p, "r");
+      const buf = Buffer.alloc(MAX_MEMORY_BYTES + 1);
+      const n = fs3.readSync(fd, buf, 0, buf.length, 0);
+      const content = buf.subarray(0, Math.min(n, MAX_MEMORY_BYTES)).toString("utf8");
+      found.push({ path: p, content: n > MAX_MEMORY_BYTES ? `${content}
+
+(cut: only the first 256 KB of this file is loaded)` : content });
     } catch {
+    } finally {
+      if (fd !== void 0) fs3.closeSync(fd);
     }
   };
   add(path3.join(CONFIG_DIR, "ZOICODE.md"));
@@ -239,14 +278,14 @@ function gitInfo(cwd) {
   const gitDir = findGitDir(cwd);
   if (!gitDir) return "Not a git repository";
   const branch = currentBranch(gitDir) ?? "(unknown)";
-  const risky = riskyGitConfig(cwd);
+  const risky = riskyGitConfig(cwd)?.filter((k) => k !== "submodules");
   if (!risky || risky.length) {
     const why = risky ? `its own git config sets ${risky.slice(0, 5).map((k) => k.slice(0, 60)).join(", ")}` : "git could not read its config";
     return `Git branch: ${branch}
 Git status: not checked, because ${why}, which can make git run other programs. Git commands here need the user's approval.`;
   }
   try {
-    const status = execFileSync2("git", ["status", "--short"], {
+    const status = execFileSync2("git", ["status", "--short", "--ignore-submodules=all"], {
       cwd,
       env: { ...process.env, ...QUIET_GIT_ENV },
       stdio: ["ignore", "pipe", "ignore"],
@@ -289,13 +328,14 @@ Date: ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}
 ${gitInfo(cwd)}
 ${memorySection}`;
 }
-var MEMORY_FILES;
+var MEMORY_FILES, MAX_MEMORY_BYTES;
 var init_prompt = __esm({
   "src/prompt.ts"() {
     "use strict";
     init_config();
     init_git();
     MEMORY_FILES = ["ZOICODE.md", "CLAUDE.md"];
+    MAX_MEMORY_BYTES = 256 * 1024;
   }
 });
 
@@ -915,8 +955,13 @@ function makeDiff(file, before, after) {
     return void 0;
   }
 }
-async function readText(abs) {
-  const raw = await fs6.readFile(abs);
+async function readText(abs, signal) {
+  const stat = await fs6.stat(abs);
+  if (!stat.isFile()) throw new Error(`${abs} is not a regular file (a device, FIFO or socket), so it is not read.`);
+  if (stat.size > MAX_FILE_BYTES) {
+    throw new Error(`${abs} is ${(stat.size / 1e6).toFixed(0)} MB, too large to load. Use Grep, or Bash (head, tail, sed -n) to read parts.`);
+  }
+  const raw = await fs6.readFile(abs, { signal });
   return { text: raw.toString("utf8"), utf8: isUtf8(raw) };
 }
 async function exists(p) {
@@ -941,13 +986,14 @@ function applyEdit(before, input, file = "the file") {
   }
   return { after: replaceAll ? parts.join(newStr) : before.replace(oldStr, () => newStr), count };
 }
-var MAX_LINES, MAX_LINE_LEN, notUtf8, BAD_EDIT_ARGS, ReadTool, WriteTool, EditTool, LSTool;
+var MAX_LINES, MAX_LINE_LEN, MAX_FILE_BYTES, notUtf8, BAD_EDIT_ARGS, ReadTool, WriteTool, EditTool, LSTool;
 var init_files = __esm({
   "src/tools/files.ts"() {
     "use strict";
     init_types();
     MAX_LINES = 2e3;
     MAX_LINE_LEN = 2e3;
+    MAX_FILE_BYTES = 5e7;
     notUtf8 = (abs) => `${abs} is not valid UTF-8 (a legacy encoding such as CP949/EUC-KR, Shift-JIS or Latin-1, or a binary file). Changing it with this tool would replace those bytes with U+FFFD and corrupt it. Use Bash (e.g. iconv) instead, or ask the user whether to convert the file to UTF-8.`;
     BAD_EDIT_ARGS = 'old_string and new_string must both be strings. To delete text, pass new_string: "".';
     ReadTool = {
@@ -971,7 +1017,14 @@ var init_files = __esm({
           return { output: await exists(abs) ? `${abs} is a broken symbolic link.` : `File does not exist: ${abs}`, isError: true };
         }
         if (stat.isDirectory()) return { output: `${abs} is a directory. Use LS to list it.`, isError: true };
-        const { text: content, utf8 } = await readText(abs);
+        let read;
+        try {
+          read = await readText(abs, ctx.signal);
+        } catch (e) {
+          ctx.signal?.throwIfAborted();
+          return { output: e.message, isError: true };
+        }
+        const { text: content, utf8 } = read;
         ctx.readFiles.set(abs, stat.mtimeMs);
         if (content.length === 0) return { output: "<file is empty>", summary: "Read empty file" };
         const lines = content.split("\n");
@@ -1006,7 +1059,7 @@ var init_files = __esm({
         if (existed && !ctx.readFiles.has(abs)) {
           return { output: `File ${abs} already exists. Read it before overwriting.`, isError: true };
         }
-        const current = existed ? await readText(abs) : { text: "", utf8: true };
+        const current = existed ? await readText(abs, ctx.signal) : { text: "", utf8: true };
         if (!current.utf8) return { output: notUtf8(abs), isError: true };
         await fs6.mkdir(path7.dirname(abs), { recursive: true });
         await fs6.writeFile(abs, input.content);
@@ -1050,7 +1103,7 @@ var init_files = __esm({
         if (mtime > (ctx.readFiles.get(abs) ?? 0) + 1) {
           return { output: `${abs} changed on disk since it was read. Read it again.`, isError: true };
         }
-        const { text: before, utf8 } = await readText(abs);
+        const { text: before, utf8 } = await readText(abs, ctx.signal);
         if (!utf8) return { output: notUtf8(abs), isError: true };
         const edit = applyEdit(before, input, abs);
         if ("error" in edit) return { output: edit.error, isError: true };
@@ -1124,9 +1177,9 @@ function loopGuard() {
   const secret = secretMatcher();
   function readdir(dir, opts, cb) {
     const done = typeof opts === "function" ? opts : cb;
-    const clean = dir.replace(/\/+$/, "") || "/";
-    if (secret(clean)) return done(null, []);
-    const filter = (err, entries) => done(err, entries?.filter((e) => !secret(path8.join(clean, typeof e === "string" ? e : e.name))));
+    const clean2 = dir.replace(/\/+$/, "") || "/";
+    if (secret(clean2)) return done(null, []);
+    const filter = (err, entries) => done(err, entries?.filter((e) => !secret(path8.join(clean2, typeof e === "string" ? e : e.name))));
     if (typeof opts === "function") fsCb.readdir(dir, filter);
     else fsCb.readdir(dir, opts, filter);
   }
@@ -1473,20 +1526,59 @@ var init_todo = __esm({
 });
 
 // src/tools/web.ts
+function dropComments(html) {
+  let out = "";
+  for (let i = 0; ; ) {
+    const start = html.indexOf("<!--", i);
+    if (start === -1) return out + html.slice(i);
+    out += html.slice(i, start);
+    const end = html.indexOf("-->", start + 4);
+    if (end === -1) return out;
+    i = end + 3;
+  }
+}
 function htmlToText(html) {
-  let s = html.replace(/<!--[\s\S]*?-->/g, "").replace(/<(script|style|noscript|svg|head|iframe)\b[\s\S]*?<\/\1>/gi, "").replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_m, n, t) => `
+  let out = "";
+  let link;
+  let skipping = "";
+  const emit = (t) => {
+    if (link) link.text += t;
+    else out += t;
+  };
+  const endLink = () => {
+    if (!link) return;
+    const { href = "", text } = link;
+    link = void 0;
+    const t = text.trim();
+    out += t && href && !href.startsWith("#") && !href.startsWith("javascript:") ? `[${t}](${href})` : t;
+  };
+  const token = /<[^<>]*>|[^<]+|</g;
+  const source = dropComments(html.slice(0, MAX_HTML));
+  for (let m = token.exec(source); m; m = token.exec(source)) {
+    const t = m[0];
+    const tag = t.length > 1 && t[0] === "<" ? /^<(\/?)([a-z][\w-]*)/i.exec(t) : null;
+    if (!tag) {
+      if (!skipping && (t[0] !== "<" || t === "<")) emit(t);
+      continue;
+    }
+    const closing = tag[1] === "/";
+    const name = tag[2].toLowerCase();
+    if (skipping) {
+      if (closing && name === skipping) skipping = "";
+    } else if (!closing && SKIPPED.has(name)) skipping = name;
+    else if (/^h[1-6]$/.test(name)) emit(closing ? "\n\n" : `
 
-${"#".repeat(Number(n))} ${t}
-
-`).replace(/<a\s[^>]*?href=(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi, (_m, dq, sq, bare, t) => {
-    const href = dq ?? sq ?? bare ?? "";
-    const text = t.replace(/<[^>]+>/g, "").trim();
-    return text && !href.startsWith("#") && !href.startsWith("javascript:") ? `[${text}](${href})` : text;
-  }).replace(/<li[^>]*>/gi, "\n- ").replace(/<(pre)[^>]*>([\s\S]*?)<\/\1>/gi, (_m, _t, code) => `
-\`\`\`
-${code}
-\`\`\`
-`).replace(/<(br|hr)\s*\/?>/gi, "\n").replace(/<\/(p|div|section|article|header|footer|tr|table|ul|ol|blockquote)>/gi, "\n\n").replace(/<[^>]+>/g, "");
+${"#".repeat(Number(name[1]))} `);
+    else if (name === "a") {
+      endLink();
+      if (!closing) link = { href: /\shref=(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(t)?.slice(1).find((v) => v !== void 0), text: "" };
+    } else if (name === "li" && !closing) emit("\n- ");
+    else if (name === "pre") emit("\n```\n");
+    else if ((name === "br" || name === "hr") && !closing) emit("\n");
+    else if (closing && BLOCK_ENDS.has(name)) emit("\n\n");
+  }
+  endLink();
+  let s = out;
   s = s.replace(/&(#x?[0-9a-f]+|\w+);/gi, (m, e) => {
     if (e[0] === "#") {
       const code = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
@@ -1502,7 +1594,7 @@ function checkUrl(url) {
   if (url.protocol === "http:" && !["localhost", "127.0.0.1"].includes(url.hostname)) url.protocol = "https:";
   return void 0;
 }
-var MAX_BYTES, MAX_REDIRECTS, ENTITIES, WebFetchTool;
+var MAX_BYTES, MAX_REDIRECTS, ENTITIES, MAX_HTML, SKIPPED, BLOCK_ENDS, WebFetchTool;
 var init_web = __esm({
   "src/tools/web.ts"() {
     "use strict";
@@ -1510,6 +1602,9 @@ var init_web = __esm({
     MAX_BYTES = 5e6;
     MAX_REDIRECTS = 10;
     ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", mdash: "\u2014", ndash: "\u2013", hellip: "\u2026" };
+    MAX_HTML = 2e6;
+    SKIPPED = /* @__PURE__ */ new Set(["script", "style", "noscript", "svg", "head", "iframe"]);
+    BLOCK_ENDS = /* @__PURE__ */ new Set(["p", "div", "section", "article", "header", "footer", "tr", "table", "ul", "ol", "blockquote"]);
     WebFetchTool = {
       name: "WebFetch",
       description: "Fetch a web page (http/https) and return its content as readable text/markdown. Use it to read documentation, issues or articles the user points to. Long pages are truncated. A redirect to another host is not followed: you get its URL and can fetch that with another call.",
@@ -2111,6 +2206,34 @@ ${summary}` },
   }
 });
 
+// src/ui/sanitize.ts
+function clean(s, strict) {
+  return String(s).replace(ESCAPE_SEQUENCE, "").replace(CONTROL, (ch) => {
+    const code = ch.charCodeAt(0);
+    return code < 32 ? String.fromCharCode(9216 + code) : code === 127 ? "\u2421" : "\uFFFD";
+  }).replace(FORMAT, (ch) => {
+    const cp = ch.codePointAt(0);
+    if (!strict && (EVERYDAY_FORMAT.has(cp) || cp >= 917536 && cp <= 917631)) return ch;
+    return `<U+${cp.toString(16).toUpperCase().padStart(4, "0")}>`;
+  });
+}
+function sanitize(s) {
+  return clean(s, false);
+}
+function sanitizeStrict(s) {
+  return clean(s, true);
+}
+var ESCAPE_SEQUENCE, CONTROL, FORMAT, EVERYDAY_FORMAT;
+var init_sanitize = __esm({
+  "src/ui/sanitize.ts"() {
+    "use strict";
+    ESCAPE_SEQUENCE = /\x1b(?:\[[0-?]*[ -/]*[@-~]|[\]PX^_][\s\S]*?(?:\x07|\x1b\\|$)|[@-Z\\-_]|$)/g;
+    CONTROL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g;
+    FORMAT = /[\p{Cf}\u115f\u1160\u3164\uffa0]/gu;
+    EVERYDAY_FORMAT = /* @__PURE__ */ new Set([173, 8204, 8205, 8206, 8207, 1564]);
+  }
+});
+
 // src/sessions.ts
 import fs8 from "node:fs";
 import path10 from "node:path";
@@ -2125,13 +2248,22 @@ function newSession(cwd) {
 function saveSession(s) {
   if (!s.messages.length) return;
   const dir = projectDir(s.cwd);
-  fs8.mkdirSync(dir, { recursive: true });
+  for (const d of [CONFIG_DIR, path10.dirname(dir), dir]) {
+    fs8.mkdirSync(d, { recursive: true, mode: 448 });
+    fs8.chmodSync(d, 448);
+  }
+  if (!tightened.has(dir)) {
+    tightened.add(dir);
+    for (const f of fs8.readdirSync(dir)) if (f.endsWith(".json")) fs8.chmodSync(path10.join(dir, f), 384);
+  }
   s.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
   if (!s.title) {
     const first = s.messages.find((m) => m.role === "user" && typeof m.content === "string");
     s.title = String(first?.content ?? "").split("\n")[0].slice(0, 80);
   }
-  fs8.writeFileSync(path10.join(dir, `${s.id}.json`), JSON.stringify(s));
+  const file = path10.join(dir, `${s.id}.json`);
+  fs8.writeFileSync(file, JSON.stringify(s), { mode: 384 });
+  fs8.chmodSync(file, 384);
 }
 function listSessions(cwd) {
   const dir = projectDir(cwd);
@@ -2152,10 +2284,12 @@ function resolveSession(cwd, continueLast, resume) {
   if (typeof resume === "string") return loadSession(cwd, resume);
   return newSession(cwd);
 }
+var tightened;
 var init_sessions = __esm({
   "src/sessions.ts"() {
     "use strict";
     init_config();
+    tightened = /* @__PURE__ */ new Set();
   }
 });
 
@@ -2245,7 +2379,7 @@ async function checkAndSave(key) {
   try {
     models = await llm.listModels();
   } catch (e) {
-    console.log(berry(`\u2717 ${e.message}`));
+    console.log(berry(`\u2717 ${sanitize(e.message)}`));
     return false;
   }
   console.log(grass(`\u2713 works! (${models.length} model${models.length === 1 ? "" : "s"} available)`));
@@ -2255,7 +2389,7 @@ async function checkAndSave(key) {
   try {
     file = saveCredentials({ RAON_API_KEY: key });
   } catch (e) {
-    console.log(berry(`\u26A0 The key works but could not be saved: ${e.message}`));
+    console.log(berry(`\u26A0 The key works but could not be saved: ${sanitize(e.message)}`));
     console.log(dim("It is used for this run only. Export RAON_API_KEY to keep it.\n"));
     return true;
   }
@@ -2306,6 +2440,7 @@ var init_setup = __esm({
     "use strict";
     init_config();
     init_llm();
+    init_sanitize();
     gold = chalk2.hex("#F7C548");
     dim = chalk2.hex("#8C7A6B");
     berry = chalk2.hex("#D9466A");
@@ -3195,7 +3330,7 @@ function loadCustomCommands(cwd, skipped = []) {
       found.set(name, {
         name,
         source,
-        description: (meta.description || firstLine || "Custom command").slice(0, 60),
+        description: sanitize(meta.description || firstLine || "Custom command").slice(0, 60),
         run: (args, api) => {
           const prompt = body.includes("$ARGUMENTS") ? body.replaceAll("$ARGUMENTS", args) : args ? `${body.trim()}
 
@@ -3244,6 +3379,7 @@ var init_commands = __esm({
     "use strict";
     init_prompt();
     init_sessions();
+    init_sanitize();
     init_theme();
     INIT_PROMPT = `Please analyze this codebase and create a ZOICODE.md file in the project root. It will be given to future coding agents working in this repository.
 
@@ -3426,22 +3562,6 @@ ${m.content.trim()}`);
   }
 });
 
-// src/ui/sanitize.ts
-function sanitize(s) {
-  return String(s).replace(ESCAPE_SEQUENCE, "").replace(CONTROL, (ch) => {
-    const code = ch.charCodeAt(0);
-    return code < 32 ? String.fromCharCode(9216 + code) : code === 127 ? "\u2421" : "\uFFFD";
-  });
-}
-var ESCAPE_SEQUENCE, CONTROL;
-var init_sanitize = __esm({
-  "src/ui/sanitize.ts"() {
-    "use strict";
-    ESCAPE_SEQUENCE = /\x1b(?:\[[0-?]*[ -/]*[@-~]|[\]PX^_][\s\S]*?(?:\x07|\x1b\\|$)|[@-Z\\-_]|$)/g;
-    CONTROL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g;
-  }
-});
-
 // src/ui/markdown.ts
 import chalk6 from "chalk";
 import { Marked } from "marked";
@@ -3614,7 +3734,7 @@ function ToolLine({ item, cwd }) {
   return /* @__PURE__ */ jsxs2(Box2, { flexDirection: "column", marginTop: 1, children: [
     /* @__PURE__ */ jsxs2(Text2, { wrap: "truncate-end", children: [
       /* @__PURE__ */ jsx2(Text2, { color: dot, children: "\u23FA " }),
-      /* @__PURE__ */ jsx2(Text2, { bold: true, color: C.parchment, children: item.name }),
+      /* @__PURE__ */ jsx2(Text2, { bold: true, color: C.parchment, children: sanitize(item.name) }),
       /* @__PURE__ */ jsxs2(Text2, { color: C.dim, children: [
         "(",
         shortLabel(item.label, cwd),
@@ -3670,7 +3790,7 @@ function MessageItem({ item, cwd }) {
         /* @__PURE__ */ jsx2(Result, { color: item.isError ? C.berry : C.stone, children: preview(item.output, 12) })
       ] });
     case "info":
-      return /* @__PURE__ */ jsx2(Box2, { marginTop: 1, paddingLeft: 2, children: /* @__PURE__ */ jsx2(Text2, { color: item.color ?? C.dim, children: item.text }) });
+      return /* @__PURE__ */ jsx2(Box2, { marginTop: 1, paddingLeft: 2, children: /* @__PURE__ */ jsx2(Text2, { color: item.color ?? C.dim, children: sanitize(item.text) }) });
     default:
       return null;
   }
@@ -3749,7 +3869,7 @@ function PermissionPrompt({
   const armed = useArmed();
   const budget = Math.max(3, maxLines - CHROME_LINES);
   const diff = useMemo2(() => previewDiff(tool, input, cwd, Math.max(2, budget - 1)), [tool, input, cwd, budget]);
-  const command = sanitize(String(input.command ?? ""));
+  const command = sanitizeStrict(String(input.command ?? ""));
   const ruleLabel = (rule) => {
     const m = rule.match(/^(\w+)\((.*)\)$/);
     if (tool.name === "Bash" && m) return `\`${sanitize(m[2])}\` commands`;
@@ -3773,7 +3893,7 @@ function PermissionPrompt({
   const title = tool.name === "Bash" ? "Bash command" : tool.name === "Write" ? "Create file" : tool.name === "Edit" ? "Edit file" : tool.name === "WebFetch" ? "Fetch from the web" : tool.readOnly ? `${tool.name} in a credential folder` : tool.name;
   const target = input.file_path ?? input.path;
   const abs = target ? resolvePath({ cwd }, String(target)) : "";
-  const file = abs ? sanitize(displayPath({ cwd }, abs)) : "";
+  const file = abs ? sanitizeStrict(displayPath({ cwd }, abs)) : "";
   const outside = abs && !isInsideDir(cwd, abs);
   return /* @__PURE__ */ jsxs3(Box3, { flexDirection: "column", borderStyle: "round", borderColor: C.gold, paddingX: 1, children: [
     /* @__PURE__ */ jsxs3(Text3, { color: C.gold, bold: true, children: [
@@ -3782,13 +3902,13 @@ function PermissionPrompt({
     ] }),
     /* @__PURE__ */ jsx3(Box3, { marginY: 1, flexDirection: "column", paddingLeft: 2, children: tool.name === "Bash" ? /* @__PURE__ */ jsxs3(Fragment, { children: [
       /* @__PURE__ */ jsx3(Text3, { color: C.parchment, children: clip(command, budget - (input.description ? 1 : 0)) }),
-      input.description ? /* @__PURE__ */ jsx3(Text3, { color: C.dim, wrap: "truncate-end", children: sanitize(String(input.description)) }) : null
-    ] }) : tool.name === "WebFetch" ? /* @__PURE__ */ jsx3(Text3, { color: C.sky, children: clip(sanitize(String(input.url ?? "")), budget) }) : /* @__PURE__ */ jsxs3(Fragment, { children: [
+      input.description ? /* @__PURE__ */ jsx3(Text3, { color: C.dim, wrap: "truncate-end", children: sanitizeStrict(String(input.description)) }) : null
+    ] }) : tool.name === "WebFetch" ? /* @__PURE__ */ jsx3(Text3, { color: C.sky, children: clip(sanitizeStrict(String(input.url ?? "")), budget) }) : /* @__PURE__ */ jsxs3(Fragment, { children: [
       /* @__PURE__ */ jsxs3(Text3, { color: C.parchment, wrap: "truncate-end", children: [
         file,
         outside ? /* @__PURE__ */ jsx3(Text3, { color: C.berry, children: " (outside the project)" }) : null
       ] }),
-      tool.name === "Glob" || tool.name === "Grep" ? /* @__PURE__ */ jsx3(Text3, { color: C.dim, wrap: "truncate-end", children: sanitize(String(input.glob ?? input.pattern ?? "")) }) : null,
+      tool.name === "Glob" || tool.name === "Grep" ? /* @__PURE__ */ jsx3(Text3, { color: C.dim, wrap: "truncate-end", children: sanitizeStrict(String(input.glob ?? input.pattern ?? "")) }) : null,
       diff ? /* @__PURE__ */ jsx3(Text3, { children: diff }) : null
     ] }) }),
     /* @__PURE__ */ jsx3(Text3, { color: C.parchment, children: "Do you want to proceed?" }),
@@ -3868,7 +3988,7 @@ function SuggestionMenu({ matches, selected }) {
       start + i === selected ? "\u276F " : "  ",
       ("/" + m.name).padEnd(14),
       " ",
-      m.description
+      sanitize(m.description)
     ] }, m.name)),
     end < matches.length ? /* @__PURE__ */ jsxs4(Text4, { color: C.dim, children: [
       "  \u2193 ",
@@ -3981,6 +4101,7 @@ var MAX_SUGGESTIONS, PASTE_START, PASTE_END;
 var init_PromptInput = __esm({
   "src/ui/PromptInput.tsx"() {
     "use strict";
+    init_sanitize();
     init_theme();
     MAX_SUGGESTIONS = 8;
     PASTE_START = "[200~";
@@ -4664,8 +4785,8 @@ function infoLines(model, cwd, choice) {
   const mode = choice === "plan" ? "\u23F8 Plan Studio" : choice === "build" ? "\u23F5\u23F5 Build Studio" : choice === "continue" ? "\u21BA Continuing" : "\u273F New session";
   return [
     { text: mode, fg: "#F7C548", bold: true },
-    { text: model, fg: "#B8F28C" },
-    { text: folder, fg: "#F5DEB3" },
+    { text: sanitize(model), fg: "#B8F28C" },
+    { text: sanitize(folder), fg: "#F5DEB3" },
     { text: "/help for commands", fg: "#E8C9A0" }
   ];
 }
@@ -4802,6 +4923,7 @@ var init_opening = __esm({
     init_canvas();
     init_catAnim();
     init_scene();
+    init_sanitize();
     init_sprites();
     BSU = "\x1B[?2026h";
     ESU = "\x1B[?2026l";
@@ -4833,14 +4955,14 @@ async function startInteractive(opts) {
     else {
       console.log(paint.gold("\u{1F4FC} Saved sessions \u2014 resume with zoicode -r <id>\n"));
       for (const s of all.slice(0, 15)) {
-        console.log(`  ${paint.gold(s.id)}  ${paint.dim(new Date(s.updatedAt).toLocaleString())}  ${s.title || "(untitled)"}`);
+        console.log(`  ${paint.gold(s.id)}  ${paint.dim(new Date(s.updatedAt).toLocaleString())}  ${sanitize(s.title || "(untitled)")}`);
       }
       process.exit(0);
     }
   }
   let session = resolveSession(cwd, !!opts.continueLast, opts.resume === true ? void 0 : opts.resume);
   if (!session) {
-    console.error(`No session matching "${opts.resume}" in ${cwd}`);
+    console.error(`No session matching "${sanitize(String(opts.resume))}" in ${sanitize(cwd)}`);
     process.exit(1);
   }
   const intro = opts.splash ?? !session.messages.length;
@@ -4889,6 +5011,7 @@ var init_start = __esm({
     init_App();
     init_opening();
     init_scene();
+    init_sanitize();
     init_theme();
   }
 });
@@ -4901,6 +5024,7 @@ import fs13 from "node:fs";
 import { Command, Option } from "commander";
 
 // src/headless.ts
+init_sanitize();
 import chalk from "chalk";
 var OUTPUT_FORMATS = ["text", "json", "stream-json"];
 async function runHeadless(agent, prompt, format, verbose) {
@@ -4926,11 +5050,11 @@ async function runHeadless(agent, prompt, format, verbose) {
           const delta = atMessageStart ? ev.delta.replace(/^\s+/, "") : ev.delta;
           if (!delta) break;
           atMessageStart = false;
-          process.stdout.write(delta);
+          process.stdout.write(sanitize(delta));
           break;
         }
         case "reasoning":
-          if (verbose && format === "text") err(chalk.dim.italic(ev.delta));
+          if (verbose && format === "text") err(chalk.dim.italic(sanitize(ev.delta)));
           break;
         case "assistant":
           if (ev.text.trim()) finalText = ev.text.trim();
@@ -4938,19 +5062,19 @@ async function runHeadless(agent, prompt, format, verbose) {
           atMessageStart = true;
           break;
         case "tool_start":
-          if (verbose && format === "text") err(chalk.cyan(`\u23FA ${ev.name}(${ev.label})
+          if (verbose && format === "text") err(chalk.cyan(`\u23FA ${sanitize(ev.name)}(${sanitize(ev.label)})
 `));
           break;
         case "tool_end":
           if (verbose && format === "text") {
             const color = ev.result.isError ? chalk.red : chalk.dim;
-            err(color(`  \u23BF ${ev.denied ? "Denied" : ev.result.summary ?? ev.result.output.split("\n")[0]}
+            err(color(`  \u23BF ${ev.denied ? "Denied" : sanitize(ev.result.summary ?? ev.result.output.split("\n")[0])}
 `));
           }
           break;
         case "error":
           failed = true;
-          err(chalk.red(`Error: ${ev.message}
+          err(chalk.red(`Error: ${sanitize(ev.message)}
 `));
           break;
         case "interrupted":
@@ -4961,7 +5085,7 @@ async function runHeadless(agent, prompt, format, verbose) {
     }
   } catch (e) {
     failed = true;
-    err(chalk.red(`Error: ${e.message}
+    err(chalk.red(`Error: ${sanitize(e.message)}
 `));
   }
   if (format === "json") {

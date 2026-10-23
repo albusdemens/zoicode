@@ -583,6 +583,17 @@ test('headless: json output still prints its result line when the run throws', a
   assert.match(stderr, /Error: boom/);
 });
 
+test('headless: model text, tool names and errors reach the terminal without escape codes', async () => {
+  const agent = fakeAgent(async function* (): AsyncGenerator<AgentEvent> {
+    yield { type: 'text', delta: 'Answer\x1b]0;TITLE' };
+    yield { type: 'text', delta: '\x07 \x1b[1Aover\u202e' };
+    yield { type: 'tool_start', name: 'T\x1b]52;c;aGk=\x07', label: 'x\x1b[2J', id: '1', input: {} };
+    yield { type: 'error', message: 'bad\x1b]8;;http://x\x07' };
+  });
+  const { stdout, stderr } = await capture(() => runHeadless(agent, 'go', 'text', true));
+  for (const out of [stdout, stderr.replace(/\x1b\[[0-9;]*m/g, '')]) assert.ok(!/\x1b|\x07|\u202e/.test(out), JSON.stringify(out));
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try {

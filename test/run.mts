@@ -12,6 +12,10 @@ import { GrepTool } from '../src/tools/search.js';
 import type { ToolContext } from '../src/tools/types.js';
 import { htmlToText } from '../src/tools/web.js';
 import { validateAll } from '../src/ui/sprites/index.js';
+import { MessageItem } from '../src/ui/Messages.js';
+import { sanitize, sanitizeStrict } from '../src/ui/sanitize.js';
+import { renderToString } from 'ink';
+import React from 'react';
 
 const tests: [string, () => void | Promise<void>][] = [];
 const test = (name: string, fn: () => void | Promise<void>) => tests.push([name, fn]);
@@ -88,8 +92,39 @@ test('htmlToText keeps titles, links and lists', () => {
   assert.doesNotMatch(t, /evil/);
 });
 
+test('htmlToText stays fast on hostile pages: unclosed tags, stray <, unclosed comments', () => {
+  for (const html of ['<'.repeat(5e6), '<h1>'.repeat(1e6), '<a href=x>'.repeat(5e5), '<script>'.repeat(5e5), '<!--'.repeat(1e6), '<li'.repeat(1.5e6)]) {
+    const start = Date.now();
+    htmlToText(html);
+    assert.ok(Date.now() - start < 3000, `${html.slice(0, 12)}… took ${Date.now() - start} ms`);
+  }
+});
+
 test('every sprite sheet is valid', () => {
   for (const [name, errors] of Object.entries(validateAll())) assert.deepEqual(errors, [], name);
+});
+
+test('sanitize: escape codes go, invisible and reordering characters show, everyday text stays', () => {
+  assert.equal(sanitize('a\x1b]52;c;aGk=\x07b\x1b]8;;http://x\x07c\x1b[2Jd'), 'abcd');
+  // A sequence split across two pieces of streamed text never comes alive: the ESC is gone either way.
+  assert.ok(!(sanitize('one\x1b') + sanitize(']0;title\x07two')).includes('\x1b'));
+  assert.equal(sanitize('git commit\u202e # rm -rf ~'), 'git commit<U+202E> # rm -rf ~');
+  assert.equal(sanitize('r\u200bm x\ufeff'), 'r<U+200B>m x<U+FEFF>');
+  for (const everyday of ['héllo wörld', '你好', 'مرحبا\u200f!', '👨\u200d👩\u200d👧', '🏴\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}', 'tab\tand\nnewline']) {
+    assert.equal(sanitize(everyday), everyday, everyday);
+  }
+  // An approval prompt marks the joiners and direction marks too.
+  assert.equal(sanitizeStrict('a\u200db\u200fc'), 'a<U+200D>b<U+200F>c');
+});
+
+test('tool names and info text are cleaned when shown', () => {
+  const tool = renderToString(React.createElement(MessageItem, {
+    item: { kind: 'tool', id: '1', name: 'Look\x1b]0;PWNED\x07up', label: '', status: 'error', result: { output: 'Unknown tool', isError: true } },
+    cwd: '/',
+  }), { columns: 80 });
+  const info = renderToString(React.createElement(MessageItem, { item: { kind: 'info', id: '2', text: 'desc \x1b]52;c;aGk=\x07 \u202eok' }, cwd: '/' }), { columns: 80 });
+  for (const out of [tool, info]) assert.ok(!/\x1b\]|\x07|\u202e/.test(out), JSON.stringify(out));
+  assert.match(info, /<U\+202E>ok/);
 });
 
 let failed = 0;

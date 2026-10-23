@@ -5,22 +5,71 @@ const MAX_REDIRECTS = 10;
 
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', mdash: '—', ndash: '–', hellip: '…' };
 
-/** Rough HTML → readable text: keeps headings, links, list items and paragraphs. */
+/** The most HTML converted: more than any readable page, and a bound on the work. */
+const MAX_HTML = 2_000_000;
+/** Elements whose content is not text. */
+const SKIPPED = new Set(['script', 'style', 'noscript', 'svg', 'head', 'iframe']);
+const BLOCK_ENDS = new Set(['p', 'div', 'section', 'article', 'header', 'footer', 'tr', 'table', 'ul', 'ol', 'blockquote']);
+
+/** Removes <!-- comments -->; one that is never closed runs to the end. */
+function dropComments(html: string): string {
+  let out = '';
+  for (let i = 0; ; ) {
+    const start = html.indexOf('<!--', i);
+    if (start === -1) return out + html.slice(i);
+    out += html.slice(i, start);
+    const end = html.indexOf('-->', start + 4);
+    if (end === -1) return out;
+    i = end + 3;
+  }
+}
+
+/**
+ * Rough HTML → readable text: keeps headings, links, list items and paragraphs. It walks the tags and
+ * text once, front to back, with no pattern that could backtrack: a page is fetched from anywhere, and
+ * one full of unclosed tags used to take hours here, with the whole app frozen.
+ */
 export function htmlToText(html: string): string {
-  let s = html
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<(script|style|noscript|svg|head|iframe)\b[\s\S]*?<\/\1>/gi, '')
-    .replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_m, n, t) => `\n\n${'#'.repeat(Number(n))} ${t}\n\n`)
-    .replace(/<a\s[^>]*?href=(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi, (_m, dq, sq, bare, t) => {
-      const href: string = dq ?? sq ?? bare ?? '';
-      const text = t.replace(/<[^>]+>/g, '').trim();
-      return text && !href.startsWith('#') && !href.startsWith('javascript:') ? `[${text}](${href})` : text;
-    })
-    .replace(/<li[^>]*>/gi, '\n- ')
-    .replace(/<(pre)[^>]*>([\s\S]*?)<\/\1>/gi, (_m, _t, code) => `\n\`\`\`\n${code}\n\`\`\`\n`)
-    .replace(/<(br|hr)\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|section|article|header|footer|tr|table|ul|ol|blockquote)>/gi, '\n\n')
-    .replace(/<[^>]+>/g, '');
+  let out = '';
+  let link: { href?: string; text: string } | undefined;
+  let skipping = ''; // inside <script> and the like: the element whose end tag is awaited
+  const emit = (t: string) => {
+    if (link) link.text += t;
+    else out += t;
+  };
+  const endLink = () => {
+    if (!link) return;
+    const { href = '', text } = link;
+    link = undefined;
+    const t = text.trim();
+    out += t && href && !href.startsWith('#') && !href.startsWith('javascript:') ? `[${t}](${href})` : t;
+  };
+  const token = /<[^<>]*>|[^<]+|</g;
+  const source = dropComments(html.slice(0, MAX_HTML));
+  for (let m = token.exec(source); m; m = token.exec(source)) {
+    const t = m[0];
+    const tag = t.length > 1 && t[0] === '<' ? /^<(\/?)([a-z][\w-]*)/i.exec(t) : null;
+    if (!tag) {
+      // Text, or a stray "<"; anything else in angle brackets (<!doctype html>, a < b > c) is dropped.
+      if (!skipping && (t[0] !== '<' || t === '<')) emit(t);
+      continue;
+    }
+    const closing = tag[1] === '/';
+    const name = tag[2].toLowerCase();
+    if (skipping) {
+      if (closing && name === skipping) skipping = '';
+    } else if (!closing && SKIPPED.has(name)) skipping = name;
+    else if (/^h[1-6]$/.test(name)) emit(closing ? '\n\n' : `\n\n${'#'.repeat(Number(name[1]))} `);
+    else if (name === 'a') {
+      endLink();
+      if (!closing) link = { href: /\shref=(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(t)?.slice(1).find(v => v !== undefined), text: '' };
+    } else if (name === 'li' && !closing) emit('\n- ');
+    else if (name === 'pre') emit('\n```\n');
+    else if ((name === 'br' || name === 'hr') && !closing) emit('\n');
+    else if (closing && BLOCK_ENDS.has(name)) emit('\n\n');
+  }
+  endLink();
+  let s = out;
   s = s.replace(/&(#x?[0-9a-f]+|\w+);/gi, (m, e: string) => {
     if (e[0] === '#') {
       const code = e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);

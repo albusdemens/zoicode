@@ -6,6 +6,7 @@ import { listSessions, resolveSession, type Session } from '../sessions.js';
 import { App } from './App.js';
 import { compactBanner, infoLines, runOpening, type OpeningChoice } from './opening.js';
 import { renderBanner, sceneLayout } from './scene.js';
+import { sanitize } from './sanitize.js';
 import { paint } from './theme.js';
 
 export interface StartOptions {
@@ -38,14 +39,14 @@ export async function startInteractive(opts: StartOptions) {
     else {
       console.log(paint.gold('📼 Saved sessions — resume with zoicode -r <id>\n'));
       for (const s of all.slice(0, 15)) {
-        console.log(`  ${paint.gold(s.id)}  ${paint.dim(new Date(s.updatedAt).toLocaleString())}  ${s.title || '(untitled)'}`);
+        console.log(`  ${paint.gold(s.id)}  ${paint.dim(new Date(s.updatedAt).toLocaleString())}  ${sanitize(s.title || '(untitled)')}`);
       }
       process.exit(0);
     }
   }
   let session: Session | undefined = resolveSession(cwd, !!opts.continueLast, opts.resume === true ? undefined : opts.resume);
   if (!session) {
-    console.error(`No session matching "${opts.resume}" in ${cwd}`);
+    console.error(`No session matching "${sanitize(String(opts.resume))}" in ${sanitize(cwd)}`);
     process.exit(1);
   }
 

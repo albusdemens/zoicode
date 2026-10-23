@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import chalk from 'chalk';
+import { sanitize } from './sanitize.js';
 import { C } from './theme.js';
 
 export interface Suggestion {
@@ -68,7 +69,7 @@ export function SuggestionMenu({ matches, selected }: { matches: Suggestion[]; s
       {matches.slice(start, end).map((m, i) => (
         <Text key={m.name} color={start + i === selected ? C.gold : C.dim} wrap="truncate-end">
           {start + i === selected ? '❯ ' : '  '}
-          {('/' + m.name).padEnd(14)} {m.description}
+          {('/' + m.name).padEnd(14)} {sanitize(m.description)}
         </Text>
       ))}
       {end < matches.length ? <Text color={C.dim}>  ↓ {matches.length - end} more</Text> : null}

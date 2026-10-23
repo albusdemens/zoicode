@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import type { Agent } from './agent.js';
+import { sanitize } from './ui/sanitize.js';
 
 export type OutputFormat = 'text' | 'json' | 'stream-json';
 const OUTPUT_FORMATS: OutputFormat[] = ['text', 'json', 'stream-json'];
@@ -30,11 +31,12 @@ export async function runHeadless(agent: Agent, prompt: string, format: OutputFo
           const delta = atMessageStart ? ev.delta.replace(/^\s+/, '') : ev.delta;
           if (!delta) break;
           atMessageStart = false;
-          process.stdout.write(delta);
+          // Model text can carry escape codes (a split one shows as text, never as a live code).
+          process.stdout.write(sanitize(delta));
           break;
         }
         case 'reasoning':
-          if (verbose && format === 'text') err(chalk.dim.italic(ev.delta));
+          if (verbose && format === 'text') err(chalk.dim.italic(sanitize(ev.delta)));
           break;
         case 'assistant':
           if (ev.text.trim()) finalText = ev.text.trim();
@@ -42,17 +44,17 @@ export async function runHeadless(agent: Agent, prompt: string, format: OutputFo
           atMessageStart = true;
           break;
         case 'tool_start':
-          if (verbose && format === 'text') err(chalk.cyan(`⏺ ${ev.name}(${ev.label})\n`));
+          if (verbose && format === 'text') err(chalk.cyan(`⏺ ${sanitize(ev.name)}(${sanitize(ev.label)})\n`));
           break;
         case 'tool_end':
           if (verbose && format === 'text') {
             const color = ev.result.isError ? chalk.red : chalk.dim;
-            err(color(`  ⎿ ${ev.denied ? 'Denied' : ev.result.summary ?? ev.result.output.split('\n')[0]}\n`));
+            err(color(`  ⎿ ${ev.denied ? 'Denied' : sanitize(ev.result.summary ?? ev.result.output.split('\n')[0])}\n`));
           }
           break;
         case 'error':
           failed = true;
-          err(chalk.red(`Error: ${ev.message}\n`));
+          err(chalk.red(`Error: ${sanitize(ev.message)}\n`));
           break;
         case 'interrupted':
           failed = true;
@@ -63,7 +65,7 @@ export async function runHeadless(agent: Agent, prompt: string, format: OutputFo
   } catch (e) {
     // agent.run reports failures as events; this is a backstop so that json output still gets its result line.
     failed = true;
-    err(chalk.red(`Error: ${(e as Error).message}\n`));
+    err(chalk.red(`Error: ${sanitize((e as Error).message)}\n`));
   }
 
   if (format === 'json') {

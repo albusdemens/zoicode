@@ -19,9 +19,21 @@ export function makeDiff(file: string, before: string, after: string): string | 
   }
 }
 
-/** Reads a file as text. utf8 is false when its bytes are not valid UTF-8, so the text could not be written back as is. */
-async function readText(abs: string) {
-  const raw = await fs.readFile(abs);
+/** The largest file Read, Edit and Write load: past it, Grep or Bash (head, sed -n) read parts. */
+const MAX_FILE_BYTES = 50_000_000;
+
+/**
+ * Reads a file as text. utf8 is false when its bytes are not valid UTF-8, so the text could not be
+ * written back as is. Only regular files of a sane size: a FIFO would wait forever and /dev/zero never
+ * ends. The signal stops a slow read (Esc).
+ */
+async function readText(abs: string, signal?: AbortSignal) {
+  const stat = await fs.stat(abs);
+  if (!stat.isFile()) throw new Error(`${abs} is not a regular file (a device, FIFO or socket), so it is not read.`);
+  if (stat.size > MAX_FILE_BYTES) {
+    throw new Error(`${abs} is ${(stat.size / 1e6).toFixed(0)} MB, too large to load. Use Grep, or Bash (head, tail, sed -n) to read parts.`);
+  }
+  const raw = await fs.readFile(abs, { signal });
   return { text: raw.toString('utf8'), utf8: isUtf8(raw) };
 }
 
@@ -95,7 +107,14 @@ export const ReadTool: Tool<{ file_path: string; offset?: number; limit?: number
       return { output: (await exists(abs)) ? `${abs} is a broken symbolic link.` : `File does not exist: ${abs}`, isError: true };
     }
     if (stat.isDirectory()) return { output: `${abs} is a directory. Use LS to list it.`, isError: true };
-    const { text: content, utf8 } = await readText(abs);
+    let read: { text: string; utf8: boolean };
+    try {
+      read = await readText(abs, ctx.signal);
+    } catch (e) {
+      ctx.signal?.throwIfAborted();
+      return { output: (e as Error).message, isError: true };
+    }
+    const { text: content, utf8 } = read;
     ctx.readFiles.set(abs, stat.mtimeMs);
     if (content.length === 0) return { output: '<file is empty>', summary: 'Read empty file' };
     const lines = content.split('\n');
@@ -136,7 +155,7 @@ export const WriteTool: Tool<{ file_path: string; content: string }> = {
       return { output: `File ${abs} already exists. Read it before overwriting.`, isError: true };
     }
     // The model only ever saw U+FFFD for bytes that are not UTF-8, so whatever it writes cannot keep them.
-    const current = existed ? await readText(abs) : { text: '', utf8: true };
+    const current = existed ? await readText(abs, ctx.signal) : { text: '', utf8: true };
     if (!current.utf8) return { output: notUtf8(abs), isError: true };
     await fs.mkdir(path.dirname(abs), { recursive: true });
     await fs.writeFile(abs, input.content);
@@ -184,7 +203,7 @@ export const EditTool: Tool<EditInput> = {
     if (mtime > (ctx.readFiles.get(abs) ?? 0) + 1) {
       return { output: `${abs} changed on disk since it was read. Read it again.`, isError: true };
     }
-    const { text: before, utf8 } = await readText(abs);
+    const { text: before, utf8 } = await readText(abs, ctx.signal);
     if (!utf8) return { output: notUtf8(abs), isError: true };
     const edit = applyEdit(before, input, abs);
     if ('error' in edit) return { output: edit.error, isError: true };

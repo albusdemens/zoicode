@@ -3,9 +3,11 @@
  * Same style as run.mts: each test is a named function that throws on failure.
  */
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { loadMemory } from '../src/prompt.js';
 import { applyEdit, EditTool, ReadTool, WriteTool } from '../src/tools/files.js';
 import { isInsideDir, resolvePath, type ToolContext } from '../src/tools/types.js';
 
@@ -217,6 +219,37 @@ test('Write and Edit do not create files through a dangling symlink', async () =
   assert.equal((await EditTool.run({ file_path: 'build.sh', old_string: '', new_string: 'echo planted\n' }, ctx)).isError, true);
   assert.match((await ReadTool.run({ file_path: 'build.sh' }, ctx)).output, /broken symbolic link/);
   assert.equal(fs.existsSync(path.join(outside, 'planted.sh')), false);
+});
+
+test('Read refuses FIFOs and devices at once, and a file too large to load', async () => {
+  const ctx = tmpCtx();
+  const fifo = path.join(ctx.cwd, 'pipe');
+  if (spawnSync('mkfifo', [fifo]).status === 0) {
+    const start = Date.now();
+    const r = await ReadTool.run({ file_path: fifo }, ctx);
+    assert.equal(r.isError, true);
+    assert.match(r.output, /not a regular file/);
+    assert.ok(Date.now() - start < 2000);
+  }
+  if (fs.existsSync('/dev/zero')) {
+    const r = await ReadTool.run({ file_path: '/dev/zero' }, ctx);
+    assert.equal(r.isError, true);
+    assert.match(r.output, /not a regular file/);
+  }
+  const big = path.join(ctx.cwd, 'big.log');
+  fs.writeFileSync(big, '');
+  fs.truncateSync(big, 60_000_000); // sparse: no disk used
+  const r = await ReadTool.run({ file_path: big }, ctx);
+  assert.equal(r.isError, true);
+  assert.match(r.output, /too large to load/);
+});
+
+test('memory files from a project are cut at 256 KB', () => {
+  const ctx = tmpCtx();
+  fs.writeFileSync(path.join(ctx.cwd, 'CLAUDE.md'), 'x'.repeat(1_000_000));
+  const mine = loadMemory(ctx.cwd).find(m => m.path === path.join(ctx.cwd, 'CLAUDE.md'))!;
+  assert.ok(mine.content.length < 270_000, String(mine.content.length));
+  assert.match(mine.content, /only the first 256 KB/);
 });
 
 let failed = 0;
