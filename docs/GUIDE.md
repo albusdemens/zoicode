@@ -120,6 +120,15 @@ Add `--permission-mode acceptEdits` to let it edit files, or `--yolo` to allow e
   long command is cut off with `… +N more lines`: if you can't see all of it, answer No (Esc) and
   ask Raon to split it up.
 
+## Install, update, uninstall
+
+`install.sh` (see the [README](../README.md)) downloads the official Node.js 22 for your machine from
+nodejs.org, checks it against nodejs.org's SHA-256 list, and keeps it with the app in
+`~/.zoicode/runtime`; `~/.local/bin/zoicode` starts the app with it, whatever Node.js you have
+otherwise. Running the script again updates both. To uninstall:
+`rm -rf ~/.zoicode/runtime ~/.local/bin/zoicode` (the rest of `~/.zoicode` holds your key, sessions
+and notes).
+
 ## Configuration
 
 Set these in your environment or in `~/.zoicode/.env`:

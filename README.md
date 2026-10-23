@@ -3,20 +3,19 @@
 
 ## Install
 
-You need Linux, macOS or WSL, Node.js 22.12+, and a Raon API key (apply on the
-[Raon site](https://raon-mini.krafton.ai/en), then create one in the Raon console).
+On Linux, macOS or WSL (on Windows, in your WSL terminal):
 
 ```sh
-npm install -g --no-fund https://github.com/albusdemens/zoicode/archive/refs/heads/main.tar.gz
+curl -fsSL https://raw.githubusercontent.com/albusdemens/zoicode/main/install.sh | bash
 ```
 
-npm ends with a line like `added 98 packages in 6s`. Run it again to update.
+No sudo and no Node.js needed: it sets up its own Node.js 22 in `~/.zoicode/runtime` and the
+`zoicode` command in `~/.local/bin`. Run it again to update. (With Node.js 22.12+ you can also use
+`npm install -g --no-fund https://github.com/albusdemens/zoicode/archive/refs/heads/main.tar.gz`.)
 
-If npm fails with `EACCES`, or your Node is older than 22.12 (Ubuntu's and WSL's own package is),
-install Node with [nvm](https://github.com/nvm-sh/nvm) (`nvm install 22`) or Homebrew, and don't use sudo.
-
-Then run `zoicode` in your project folder. The first time, it asks for your API key and saves it
-to `~/.zoicode/.env`. You can also set `RAON_API_KEY` instead.
+Then open a new terminal and run `zoicode` in your project folder. The first time, it asks for a Raon
+API key (apply on the [Raon site](https://raon-mini.krafton.ai/en), then create one in the Raon
+console) and saves it to `~/.zoicode/.env`. You can also set `RAON_API_KEY` instead.
 
 Maximize your terminal first: the opening scene needs 116×42. On macOS, iTerm2, Ghostty or WezTerm
 show the colors best.

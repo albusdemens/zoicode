@@ -50,3 +50,29 @@ jobs:
           pip install --quiet pyte
           mkdir -p "$RUNNER_TEMP/sysbash" && ln -sf /bin/bash "$RUNNER_TEMP/sysbash/bash"
           PATH="$RUNNER_TEMP/sysbash:$PATH" test/ui-smoke.sh "$(npm root -g)/zoicode/dist/cli.js"
+
+  # The one-line installer on a clean account: no Node.js on PATH, nothing in the home folder.
+  installer:
+    name: install.sh on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Pack this commit
+        run: npm ci && npm pack --silent && mv zoicode-*.tgz "$RUNNER_TEMP/zoicode.tgz"
+      - name: Install with no Node.js on PATH, then answer one prompt headlessly
+        run: |
+          home="$RUNNER_TEMP/home" && mkdir -p "$home"
+          node test/fake-raon.mjs 47811 > /dev/null 2>&1 &
+          env -i HOME="$home" PATH=/usr/bin:/bin SHELL=/bin/bash TERM=dumb \
+            ZOICODE_TARBALL="$RUNNER_TEMP/zoicode.tgz" bash ./install.sh
+          grep -q 'Added by the Zoi Code installer' "$home/.bashrc"
+          env -i HOME="$home" PATH=/usr/bin:/bin RAON_BASE_URL=http://127.0.0.1:47811/v1 RAON_API_KEY=test \
+            "$home/.local/bin/zoicode" -p hello | grep 'You said: hello'
+
